@@ -8,30 +8,36 @@ on:
 
 jobs:
   linux-x86_64:
-    # Build inside Ubuntu 20.04 so the resulting .so targets glibc 2.31
-    # instead of the newer glibc shipped by ubuntu-24.04.
+    # GitHub provides the Docker host, but compilation itself happens inside
+    # Valve's Steam Runtime 3 (sniper), matching CS2's linuxsteamrt64 ABI.
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     container:
-      image: ubuntu:20.04
-    timeout-minutes: 20
+      image: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest
 
     steps:
       - name: Checkout plugin
         uses: actions/checkout@v4
 
-      - name: Install build packages
+      - name: Install build packages in Steam Runtime Sniper
+        shell: bash
         run: |
-          export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends build-essential clang lld binutils protobuf-compiler python3 python3-pip python3-venv git ca-certificates zip
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential clang lld binutils protobuf-compiler \
+            python3 python3-pip python3-venv git zip ca-certificates
+          rm -rf /var/lib/apt/lists/*
+          echo "Build glibc: $(ldd --version | head -n1)"
 
       - name: Checkout Metamod and AMBuild
+        shell: bash
         run: |
           mkdir -p deps
           git clone --depth=1 --recurse-submodules https://github.com/alliedmodders/metamod-source.git deps/metamod-source
           git clone --depth=1 https://github.com/alliedmodders/ambuild.git deps/ambuild
 
       - name: Install AMBuild
+        shell: bash
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
@@ -39,17 +45,20 @@ jobs:
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Checkout matching CS2 HL2SDK via Metamod helper
+        shell: bash
         run: |
-          (cd deps && ./metamod-source/support/checkout-deps.sh -s cs2)
+          (cd deps && bash ./metamod-source/support/checkout-deps.sh -s cs2)
           test -d deps/hl2sdk-cs2
 
       - name: Sync current Source2/KHook build scripts from Metamod
+        shell: bash
         run: |
           bash tools/sync-buildscripts.sh "$GITHUB_WORKSPACE/deps/metamod-source"
           test -f deps/metamod-source/third_party/khook/include/khook.hpp
           grep -q "third_party.*khook" AMBuildScript
 
       - name: Configure
+        shell: bash
         run: |
           mkdir -p build
           cd build
@@ -62,52 +71,40 @@ jobs:
             --hl2sdk-manifests="$GITHUB_WORKSPACE/deps/metamod-source/hl2sdk-manifests"
 
       - name: Build
+        shell: bash
         run: |
           cd build
           ambuild
 
-      - name: Verify ABI compatibility
+      - name: Verify Steam Runtime ABI
         shell: bash
         run: |
-          set -euo pipefail
-          SO=build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so
+          SO="build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so"
           test -f "$SO"
 
-          echo "Verifying v0.3.3 built-in menu binary does not depend on CS2Menus/libcurl:"
-          if readelf -d "$SO" | grep -Ei 'cs2menus|libcurl'; then
-            echo "ERROR: unexpected external menu/curl dependency"
-            exit 1
-          fi
+          echo "=== ELF ==="
+          file "$SO"
+          echo "=== required GLIBC symbols ==="
+          readelf --version-info "$SO" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu | uniq || true
+          echo "=== required GLIBCXX symbols ==="
+          readelf --version-info "$SO" | grep -oE 'GLIBCXX_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -Vu | uniq || true
 
-          echo "Checking that the retired crash-prone legacy CenterHTML path is gone:"
-          if strings "$SO" | grep -E 'show_survival_respawn_status|Source1LegacyGameEvent'; then
-            echo "ERROR: legacy CenterHTML game-event path is still present"
-            exit 1
-          fi
+          # CS2 linuxsteamrt64 uses Steam Runtime 3 "sniper" (glibc 2.31).
+          # Fail CI if a future runner/toolchain accidentally introduces a newer dependency.
+          python3 - <<'PY'
+          import re, subprocess, sys
+          so = 'build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so'
+          out = subprocess.check_output(['readelf', '--version-info', so], text=True, errors='replace')
+          versions = [(int(a), int(b)) for a, b in re.findall(r'GLIBC_(\d+)\.(\d+)', out)]
+          newest = max(versions, default=(0, 0))
+          print(f'Highest required GLIBC: {newest[0]}.{newest[1]}')
+          if newest > (2, 31):
+              print('ERROR: binary is newer than Steam Runtime Sniper (glibc 2.31)', file=sys.stderr)
+              sys.exit(1)
+          PY
 
-          echo "Dynamic dependencies:"
-          readelf -d "$SO" | grep NEEDED || true
-
-          echo "Required GLIBC symbol versions:"
-          readelf --version-info "$SO" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' | sort -Vu || true
-
-          MAX_GLIBC=$(readelf --version-info "$SO" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' | sed 's/GLIBC_//' | sort -V | tail -n1)
-          echo "Highest required GLIBC: ${MAX_GLIBC:-none}"
-          if [ -n "${MAX_GLIBC:-}" ] && [ "$(printf '%s\n%s\n' "$MAX_GLIBC" '2.31' | sort -V | tail -n1)" != '2.31' ]; then
-            echo "ERROR: binary requires GLIBC $MAX_GLIBC, newer than compatibility target 2.31"
-            exit 1
-          fi
-
-          echo "Required GLIBCXX symbol versions:"
-          readelf --version-info "$SO" | grep -oE 'GLIBCXX_[0-9]+(\.[0-9]+)*' | sort -Vu || true
-
-          echo "Checking for unresolved hl2sdk entity-system calls:"
-          if nm -D --undefined-only "$SO" | c++filt | grep -E 'C(Entity|GameEntity)System::(GetEntityIdentity|GetEntityInstance)'; then
-            echo "ERROR: plugin still contains unresolved CEntitySystem entity lookup symbols"
-            exit 1
-          fi
-
-      - name: Verify package
+      - name: Package
+        shell: bash
         run: |
           test -f build/package/cs2/addons/metamod/khook_skinchanger.vdf
           test -f build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so
@@ -121,7 +118,7 @@ jobs:
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: khook-skinchanger-linux
+          name: khook-skinchanger-linux-steamrt-sniper
           path: |
             khook_skinchanger-linux.zip
             khook_skinchanger-linux.zip.sha256

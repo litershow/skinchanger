@@ -10,29 +10,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure KHook + safe built-in center-menu architecture
+      - name: Ensure new hook architecture only
         run: |
           grep -R "KHook::Virtual" src/plugin.h
           grep -R "DispatchConCommand" src/plugin.*
           grep -R "!skin" src/plugin.cpp
-          grep -R "FindNetworkMessagePartial(\"TextMsg\")" src/plugin.cpp
-          grep -R "kh_skin_diag" src/plugin.cpp
-          ! grep -R "kSource2ServerGameEventManagerVtableIndex" src/plugin.cpp
-          grep -R "CUserMessageTextMsg" src/plugin.cpp
-          ! grep -R "Source1LegacyGameEvent\|show_survival_respawn_status\|CallVirtualNoArgs" src/plugin.cpp
-          grep -R "m_pButtonStates" src/plugin.cpp
-          grep -R "IN_FORWARD" src/plugin.cpp
-          ! grep -R -E "ICS2Menus|ics2menus|CS2MENUS_INTERFACE" src AMBuilder
+          grep -R "CreateMenu(MenuType::Html" src/plugin.cpp
+          grep -R "AddSubMenu" src/plugin.cpp
           ! grep -R -E "SH_ADD_HOOK|SH_REMOVE_HOOK|SH_MEMBER" src
           grep -R "Schema_DynamicBinding" src/plugin.cpp
-          ! grep -R "GetEntityInstance(" src/plugin.cpp
-          grep -R "m_EntityList.m_pIdentityChunks" src/plugin.cpp
           grep -R "FindRawClassBinding" src/schema_resolver.cpp
       - name: Validate metadata JSON
         run: python3 -m json.tool plugin-metadata.json >/dev/null
-
-      - name: Ensure menu interfaces are optional and no guessed vtable is used
-        run: |
-          ! grep -R "GET_V_IFACE_.*g_gameEventSystem" src/plugin.cpp
-          ! grep -R "GET_V_IFACE_.*g_networkMessages" src/plugin.cpp
-          ! grep -R "GAMEEVENTSMANAGER002\|server-vfunc" src/plugin.cpp

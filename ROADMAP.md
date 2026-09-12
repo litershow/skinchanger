@@ -1,21 +1,32 @@
-# KHook SkinChanger roadmap
+# Roadmap
 
-## 0.3.3 compact menu fix
+## 0.2 — current test build
+- KHook lifecycle and GameFrame loop
+- runtime SchemaSystem field resolution
+- paint kit / seed / wear / StatTrak for existing weapons
+- in-memory per-slot + item-definition selections
+- `!skin`, `/skin`, `!skins`, `/skins` chat entry points
+- native CenterHTML hierarchy: category -> weapon -> skin
+- CS2Menus `ICS2Menus003` lifecycle handling
+- GitHub-only Linux x86_64 build/package
 
-- Render one highlighted choice at a time to avoid CS2 center-text font shrinking.
-- Remove blank TextMsg clear that produced an empty center panel.
-- Use W/S to browse, E to select and R to go back/close; A/D no longer trigger menu actions.
+## 0.3 — persistence
+- SteamID64 keyed profiles
+- JSON first, SQLite optional
+- restore selections on reconnect
 
+## 0.4 — knife layer
+- safe item-definition change path
+- subclass/model refresh isolated from basic paint application
+- knife selection menu
+- separate diagnostics for model/subclass failures
 
-## 0.3.2 safety hotfix
-- Removed `show_survival_respawn_status` / Source1LegacyGameEvent renderer.
-- Removed guessed `IGameEventManager2` server-vtable access.
-- Added safe TextMsg center menu and `kh_skin_hudtest`.
-- Keep movement/input state reading through runtime schema.
+## 0.5 — catalog/data
+- external paint-kit catalog file instead of recompiling
+- search/pagination improvements for a much larger skin list
+- seed/wear presets
 
-## Next
-- Validate menu input on live Metamod 2.0 build 1467+.
-- Optional richer UI via Valve `custom_hud_layout` once a stable native path is proven.
-- Persist selections by SteamID.
-- Knife subclass/model switching.
-- Gloves / agents / stickers.
+## 0.6 — extras
+- gloves
+- agents
+- stickers / nametag where current server econ path permits

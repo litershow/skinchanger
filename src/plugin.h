@@ -10,10 +10,11 @@
 #include "schema_resolver.h"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
-#include <string>
 #include <unordered_map>
+#include <vector>
+
+class ICS2Menus;
 
 struct SkinSelection
 {
@@ -23,24 +24,6 @@ struct SkinSelection
     int statTrak = -1;
 };
 
-enum class NativeMenuPage : std::uint8_t
-{
-    Closed = 0,
-    Groups,
-    Weapons,
-    Skins,
-};
-
-struct NativeMenuState
-{
-    NativeMenuPage page = NativeMenuPage::Closed;
-    std::size_t group = 0;
-    std::size_t weapon = 0;
-    std::size_t cursor = 0;
-    std::uint64_t lastButtons = 0;
-    int refreshFrames = 0;
-};
-
 class KHookSkinChanger final : public ISmmPlugin, public IMetamodListener
 {
 public:
@@ -48,6 +31,9 @@ public:
 
     bool Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool late) override;
     bool Unload(char* error, size_t maxlen) override;
+    void AllPluginsLoaded() override;
+    void OnPluginLoad(PluginId id) override;
+    void OnPluginUnload(PluginId id) override;
 
     void OnLevelInit(const char* mapName,
                      const char* mapEntities,
@@ -70,7 +56,8 @@ public:
     void CommandClearSkin(CPlayerSlot slot);
     void CommandSkinInfo(CPlayerSlot slot);
     void CommandOpenSkinMenu(CPlayerSlot slot);
-    bool SendCenterTextForTest(CPlayerSlot slot, const std::string& text);
+
+    void HandleSkinMenuSelection(std::uint32_t menu, int slot, int item);
 
     const char* GetAuthor() override { return PLUGIN_AUTHOR; }
     const char* GetName() override { return PLUGIN_DISPLAY_NAME; }
@@ -84,13 +71,9 @@ public:
 private:
     static constexpr int kMaxPlayers = 64;
     static constexpr int kApplyEveryNFrames = 8;
-    static constexpr int kMenuRefreshEveryNFrames = 32;
 
     void RefreshEntitySystem();
     void TickPlayers();
-    CEntityIdentity* ResolveIdentity(CEntityIndex index) const;
-    CEntityInstance* ResolveEntity(CEntityIndex index) const;
-    CEntityInstance* ResolveEntity(const CEntityHandle& handle) const;
     CEntityInstance* GetController(CPlayerSlot slot) const;
     CEntityInstance* GetPawn(CPlayerSlot slot);
     CEntityInstance* GetActiveWeapon(CPlayerSlot slot, uint16_t* itemDefinition = nullptr);
@@ -100,18 +83,11 @@ private:
     bool SetSkinForDefinition(CPlayerSlot slot, uint16_t itemDefinition, const SkinSelection& selection);
     void ClearSlot(CPlayerSlot slot);
 
-    // Built-in center-HUD menu. No external CS2Menus plugin is required.
+    void AcquireMenus();
+    void BuildMenus();
+    void DropMenus();
+    void ForgetMenus();
     void OpenSkinMenu(CPlayerSlot slot);
-    void CloseSkinMenu(CPlayerSlot slot, bool clearHud = true);
-    void TickMenus();
-    void TickMenu(CPlayerSlot slot);
-    void MenuMove(CPlayerSlot slot, int delta);
-    void MenuSelect(CPlayerSlot slot);
-    void MenuBack(CPlayerSlot slot);
-    std::size_t MenuItemCount(const NativeMenuState& state) const;
-    std::uint64_t ReadButtons(CPlayerSlot slot);
-    bool SendCenterText(CPlayerSlot slot, const std::string& text);
-    std::string BuildMenuText(CPlayerSlot slot) const;
 
     template <typename T>
     static T* FieldPtr(void* base, std::ptrdiff_t offset)
@@ -129,9 +105,11 @@ private:
     SchemaResolver m_schema;
     CGameEntitySystem* m_entitySystem = nullptr;
     IGameResourceService* m_gameResourceService = nullptr;
+    ICS2Menus* m_menus = nullptr;
+    std::uint32_t m_mainMenu = 0;
+    std::vector<std::uint32_t> m_ownedMenus;
     int m_frameCounter = 0;
     std::array<std::unordered_map<uint16_t, SkinSelection>, kMaxPlayers> m_skins;
-    std::array<NativeMenuState, kMaxPlayers> m_menuStates;
 };
 
 extern KHookSkinChanger g_KHookSkinChanger;
