@@ -2,16 +2,15 @@ name: Build CS2 KHook SkinChanger
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
 jobs:
   linux-x86_64:
-    # GitHub provides the Docker host, but compilation itself happens inside
-    # Valve's Steam Runtime 3 (sniper), matching CS2's linuxsteamrt64 ABI.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
+
     container:
       image: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest
 
@@ -19,49 +18,77 @@ jobs:
       - name: Checkout plugin
         uses: actions/checkout@v4
 
-      - name: Install build packages in Steam Runtime Sniper
+      - name: Install build packages
         shell: bash
         run: |
+          set -euxo pipefail
+
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential clang lld binutils protobuf-compiler \
-            python3 python3-pip python3-venv git zip ca-certificates
-          rm -rf /var/lib/apt/lists/*
-          echo "Build glibc: $(ldd --version | head -n1)"
+
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            git \
+            zip \
+            build-essential \
+            clang \
+            lld \
+            binutils \
+            protobuf-compiler \
+            python3 \
+            python3-pip
 
       - name: Checkout Metamod and AMBuild
         shell: bash
         run: |
+          set -euxo pipefail
+
           mkdir -p deps
-          git clone --depth=1 --recurse-submodules https://github.com/alliedmodders/metamod-source.git deps/metamod-source
-          git clone --depth=1 https://github.com/alliedmodders/ambuild.git deps/ambuild
+
+          git clone --depth=1 --recurse-submodules \
+            https://github.com/alliedmodders/metamod-source.git \
+            deps/metamod-source
+
+          git clone --depth=1 \
+            https://github.com/alliedmodders/ambuild.git \
+            deps/ambuild
 
       - name: Install AMBuild
         shell: bash
         run: |
-          python3 -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install ./deps/ambuild
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          set -euxo pipefail
 
-      - name: Checkout matching CS2 HL2SDK via Metamod helper
+          python3 -m pip install \
+            --disable-pip-version-check \
+            ./deps/ambuild
+
+      - name: Checkout matching CS2 HL2SDK
         shell: bash
         run: |
-          (cd deps && bash ./metamod-source/support/checkout-deps.sh -s cs2)
-          test -d deps/hl2sdk-cs2
+          set -euxo pipefail
 
-      - name: Sync current Source2/KHook build scripts from Metamod
+          cd deps
+          ./metamod-source/support/checkout-deps.sh -s cs2
+          test -d hl2sdk-cs2
+
+      - name: Sync current Source2 and KHook build scripts
         shell: bash
         run: |
-          bash tools/sync-buildscripts.sh "$GITHUB_WORKSPACE/deps/metamod-source"
+          set -euxo pipefail
+
+          bash tools/sync-buildscripts.sh \
+            "$GITHUB_WORKSPACE/deps/metamod-source"
+
           test -f deps/metamod-source/third_party/khook/include/khook.hpp
           grep -q "third_party.*khook" AMBuildScript
 
       - name: Configure
         shell: bash
         run: |
+          set -euxo pipefail
+
           mkdir -p build
           cd build
+
           python3 ../configure.py \
             --enable-optimize \
             -s cs2 \
@@ -73,47 +100,62 @@ jobs:
       - name: Build
         shell: bash
         run: |
+          set -euxo pipefail
+
           cd build
           ambuild
 
-      - name: Verify Steam Runtime ABI
+      - name: Verify GLIBC compatibility
         shell: bash
         run: |
-          SO="build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so"
-          test -f "$SO"
+          set -euxo pipefail
 
-          echo "=== ELF ==="
-          file "$SO"
-          echo "=== required GLIBC symbols ==="
-          readelf --version-info "$SO" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu | uniq || true
-          echo "=== required GLIBCXX symbols ==="
-          readelf --version-info "$SO" | grep -oE 'GLIBCXX_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -Vu | uniq || true
+          plugin_so="build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so"
+          test -f "$plugin_so"
 
-          # CS2 linuxsteamrt64 uses Steam Runtime 3 "sniper" (glibc 2.31).
-          # Fail CI if a future runner/toolchain accidentally introduces a newer dependency.
-          python3 - <<'PY'
-          import re, subprocess, sys
-          so = 'build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so'
-          out = subprocess.check_output(['readelf', '--version-info', so], text=True, errors='replace')
-          versions = [(int(a), int(b)) for a, b in re.findall(r'GLIBC_(\d+)\.(\d+)', out)]
-          newest = max(versions, default=(0, 0))
-          print(f'Highest required GLIBC: {newest[0]}.{newest[1]}')
-          if newest > (2, 31):
-              print('ERROR: binary is newer than Steam Runtime Sniper (glibc 2.31)', file=sys.stderr)
-              sys.exit(1)
-          PY
+          highest_glibc="$(readelf --version-info "$plugin_so" \
+            | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' \
+            | sort -Vu \
+            | tail -n 1)"
 
-      - name: Package
+          test -n "$highest_glibc"
+
+          echo "Highest required GLIBC: ${highest_glibc#GLIBC_}"
+
+          highest_allowed="$(printf '%s\n' 'GLIBC_2.31' "$highest_glibc" \
+            | sort -V \
+            | tail -n 1)"
+
+          if [ "$highest_allowed" != 'GLIBC_2.31' ]; then
+            echo "ERROR: plugin requires $highest_glibc; maximum allowed is GLIBC_2.31"
+            exit 1
+          fi
+
+      - name: Package plugin
         shell: bash
         run: |
+          set -euxo pipefail
+
           test -f build/package/cs2/addons/metamod/khook_skinchanger.vdf
           test -f build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so
+
           mkdir -p build/package/cs2/addons/khook_skinchanger/configs
-          cp configs/README.txt build/package/cs2/addons/khook_skinchanger/configs/README.txt
-          cp README.md build/package/cs2/addons/khook_skinchanger/README.md
-          cp LICENSE build/package/cs2/addons/khook_skinchanger/LICENSE
-          (cd build/package && zip -r "$GITHUB_WORKSPACE/khook_skinchanger-linux.zip" cs2)
-          sha256sum khook_skinchanger-linux.zip | tee khook_skinchanger-linux.zip.sha256
+
+          cp configs/README.txt \
+            build/package/cs2/addons/khook_skinchanger/configs/README.txt
+
+          cp README.md \
+            build/package/cs2/addons/khook_skinchanger/README.md
+
+          cp LICENSE \
+            build/package/cs2/addons/khook_skinchanger/LICENSE
+
+          cd build/package
+          zip -r "$GITHUB_WORKSPACE/khook_skinchanger-linux.zip" cs2
+
+          cd "$GITHUB_WORKSPACE"
+          sha256sum khook_skinchanger-linux.zip \
+            | tee khook_skinchanger-linux.zip.sha256
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
