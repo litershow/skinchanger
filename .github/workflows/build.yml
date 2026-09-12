@@ -73,7 +73,7 @@ jobs:
           SO=build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so
           test -f "$SO"
 
-          echo "Verifying v0.3.2 built-in menu binary does not depend on CS2Menus/libcurl:"
+          echo "Verifying v0.3.3 built-in menu binary does not depend on CS2Menus/libcurl:"
           if readelf -d "$SO" | grep -Ei 'cs2menus|libcurl'; then
             echo "ERROR: unexpected external menu/curl dependency"
             exit 1

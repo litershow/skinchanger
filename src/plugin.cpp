@@ -393,7 +393,7 @@ void KHookSkinChanger::OpenSkinMenu(CPlayerSlot slot)
         return;
     }
 
-    Reply(slot, "[KHSKIN] Menu: W/S = move, D or E = select, A = back/close.\n");
+    Reply(slot, "[KHSKIN] Menu: W/S = browse, E = select, R = back/close.\n");
 }
 
 void KHookSkinChanger::CommandOpenSkinMenu(CPlayerSlot slot)
@@ -407,8 +407,10 @@ void KHookSkinChanger::CloseSkinMenu(CPlayerSlot slot, bool clearHud)
         return;
 
     m_menuStates[slot.Get()] = {};
-    if (clearHud)
-        SendCenterText(slot, " ");
+    // Do not send a blank TextMsg here. CS2 keeps the center-panel background
+    // for a blank message, which looks like an empty brown rectangle.
+    // The previous center text expires naturally.
+    (void)clearHud;
 }
 
 std::size_t KHookSkinChanger::MenuItemCount(const NativeMenuState& state) const
@@ -495,7 +497,11 @@ void KHookSkinChanger::MenuSelect(CPlayerSlot slot)
     std::snprintf(message, sizeof(message), "[KHSKIN] Selected %s for %s (paint kit %d).\n",
                   skin.name, weapon.name, selection.paintKit);
     Reply(slot, message);
-    CloseSkinMenu(slot, true);
+    CloseSkinMenu(slot, false);
+
+    char hudMessage[256];
+    std::snprintf(hudMessage, sizeof(hudMessage), "Skin applied\n%s -> %s", skin.name, weapon.name);
+    SendCenterText(slot, hudMessage);
 }
 
 void KHookSkinChanger::MenuBack(CPlayerSlot slot)
@@ -515,7 +521,8 @@ void KHookSkinChanger::MenuBack(CPlayerSlot slot)
     }
     else
     {
-        CloseSkinMenu(slot, true);
+        CloseSkinMenu(slot, false);
+        SendCenterText(slot, "Skin menu closed");
     }
 }
 
@@ -597,13 +604,17 @@ void KHookSkinChanger::TickMenu(CPlayerSlot slot)
         MenuMove(slot, 1);
         acted = true;
     }
-    else if (pressed & (static_cast<std::uint64_t>(IN_MOVERIGHT) | static_cast<std::uint64_t>(IN_USE)))
+    else if (pressed & static_cast<std::uint64_t>(IN_USE))
     {
+        // E/Use is the only select key. Using D here made normal strafing
+        // accidentally enter menu items while the player was still moving.
         MenuSelect(slot);
         acted = true;
     }
-    else if (pressed & static_cast<std::uint64_t>(IN_MOVELEFT))
+    else if (pressed & static_cast<std::uint64_t>(IN_RELOAD))
     {
+        // R/Reload is back/close. A is intentionally not used because normal
+        // left strafing used to close the menu unexpectedly.
         MenuBack(slot);
         acted = true;
     }
@@ -628,54 +639,70 @@ std::string KHookSkinChanger::BuildMenuText(CPlayerSlot slot) const
     if (state.page == NativeMenuPage::Closed)
         return {};
 
+    // PrintToCenter/TextMsg has a fixed-height panel in CS2 and shrinks the
+    // font aggressively as lines are added. Never render the whole list.
+    // Show one large current choice plus position and controls instead.
     std::string title;
-    std::vector<const char*> items;
+    std::string selected;
+    std::string action = "E select";
+    std::size_t count = 0;
+    std::size_t cursor = state.cursor;
 
     if (state.page == NativeMenuPage::Groups)
     {
-        title = "Choose weapon type";
-        for (const CatalogGroup& group : catalog)
-            items.push_back(group.name);
+        title = "Weapon type";
+        count = catalog.size();
+        if (count != 0)
+        {
+            cursor = std::min(cursor, count - 1);
+            selected = catalog[cursor].name;
+        }
+        action = "E open";
     }
     else if (state.page == NativeMenuPage::Weapons && state.group < catalog.size())
     {
-        title = std::string("Choose weapon - ") + catalog[state.group].name;
-        for (const CatalogWeapon& weapon : catalog[state.group].weapons)
-            items.push_back(weapon.name);
+        const CatalogGroup& group = catalog[state.group];
+        title = group.name;
+        count = group.weapons.size();
+        if (count != 0)
+        {
+            cursor = std::min(cursor, count - 1);
+            selected = group.weapons[cursor].name;
+        }
+        action = "E skins";
     }
     else if (state.page == NativeMenuPage::Skins && state.group < catalog.size() &&
              state.weapon < catalog[state.group].weapons.size())
     {
         const CatalogWeapon& weapon = catalog[state.group].weapons[state.weapon];
-        title = std::string("Choose skin - ") + weapon.name;
-        for (const CatalogSkin& skin : weapon.skins)
-            items.push_back(skin.name);
-    }
-
-    std::string text = "KHook SkinChanger\n" + title + "\n\n";
-
-    if (items.empty())
-    {
-        text += "No items\n";
-    }
-    else
-    {
-        constexpr std::size_t kVisible = 7;
-        const std::size_t cursor = std::min(state.cursor, items.size() - 1);
-        std::size_t first = cursor > kVisible / 2 ? cursor - kVisible / 2 : 0;
-        if (first + kVisible > items.size())
-            first = items.size() > kVisible ? items.size() - kVisible : 0;
-        const std::size_t last = std::min(first + kVisible, items.size());
-
-        for (std::size_t i = first; i < last; ++i)
+        title = weapon.name;
+        count = weapon.skins.size();
+        if (count != 0)
         {
-            text += (i == cursor) ? "> " : "  ";
-            text += items[i];
-            text += (i == cursor) ? " <\n" : "\n";
+            cursor = std::min(cursor, count - 1);
+            selected = weapon.skins[cursor].name;
         }
+        action = "E APPLY";
     }
 
-    text += "\nW/S move | D/E select | A back";
+    if (count == 0 || selected.empty())
+        return "KHook SkinChanger\nNo menu items\nR back";
+
+    char page[64];
+    std::snprintf(page, sizeof(page), "%zu/%zu", cursor + 1, count);
+
+    // Keep this at three lines. On the user's 16:9 HUD, seven-line center text
+    // was reduced to an unreadably small font by the client.
+    std::string text;
+    text.reserve(192);
+    text += title;
+    text += "  [";
+    text += page;
+    text += "]\n>>> ";
+    text += selected;
+    text += " <<<\nW/S browse   ";
+    text += action;
+    text += "   R back";
     return text;
 }
 

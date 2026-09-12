@@ -1,4 +1,4 @@
-KHook SkinChanger 0.3.2
+KHook SkinChanger 0.3.3
 
 No CS2Menus plugin is required.
 The built-in menu uses Source2 TextMsg center HUD output.
@@ -12,6 +12,6 @@ Diagnostics:
   kh_skin_menu
 
 Controls:
-  W/S = move
-  D or E = select
-  A = back/close
+  W/S = browse
+  E = select
+  R = back/close

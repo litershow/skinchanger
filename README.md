@@ -1,8 +1,17 @@
-# CS2 KHook SkinChanger 0.3.2
+# CS2 KHook SkinChanger 0.3.3
 
 Native C++ skin changer for **Counter-Strike 2 + Metamod:Source 2.x + KHook**.
 This build has its **own center-screen menu** and does not require CounterStrikeSharp,
 CS2Menus, libcurl, or another menu plugin.
+
+## v0.3.3 compact menu fix
+
+CS2 shrinks `TextMsg` center text when too many lines are displayed. v0.3.3 therefore
+renders only the currently highlighted item (three lines total), so the text remains much
+larger and readable. The blank-message clear was removed because it left an empty center
+panel visible. Menu controls are now **W/S browse, E select, R back/close**; A/D are not
+menu actions anymore, so normal strafing cannot accidentally select or close the menu.
+
 
 ## Important v0.3.2 crash fix
 
@@ -14,7 +23,7 @@ v0.3.2 renders the menu with the normal Source2 `TextMsg` user message, targeted
 player through `IGameEventSystem::PostEventAbstract`. This is the same basic center-text
 network path used by current native CS2 Metamod projects such as CS2Fixes.
 
-The tradeoff is intentional: v0.3.2 is a **plain center-HUD menu, not HTML**. Stability
+The tradeoff is intentional: this is a **plain center-HUD menu, not HTML**. Stability
 comes first. A richer `custom_hud_layout` renderer can be added later as a separate layer.
 
 ## Menu
@@ -39,9 +48,9 @@ Flow:
 Controls:
 
 ```text
-W / S  - move
-D or E - select
-A      - back / close
+W / S  - browse
+E      - select
+R      - back / close
 ```
 
 The selection is stored by player slot + item definition and is re-applied when that
