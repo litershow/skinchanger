@@ -25,7 +25,6 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # Separate APT sources and indexes for this build step.
           apt_work="$(mktemp -d)"
           chmod 0755 "$apt_work"
 
@@ -102,6 +101,37 @@ jobs:
 
           test -f deps/metamod-source/third_party/khook/include/khook.hpp
           grep -q "third_party.*khook" AMBuildScript
+
+      - name: Prepare CS2Menus headers
+        shell: bash
+        env:
+          CS2MENUS_REF: "1.5.8"
+        run: |
+          set -euxo pipefail
+
+          cs2menus_dir="$GITHUB_WORKSPACE/deps/cs2menus"
+
+          git clone --depth=1 --branch "$CS2MENUS_REF" \
+            https://github.com/FemboyKZ/mm-cs2menus.git \
+            "$cs2menus_dir"
+
+          cs2menus_include_dir="$cs2menus_dir/src/public"
+          cs2menus_header="$cs2menus_include_dir/ics2menus.h"
+
+          test -s "$cs2menus_header"
+
+          if ! grep -Fq 'ICS2Menus003' "$cs2menus_header"; then
+            echo "::error::The downloaded header does not declare ICS2Menus003."
+            exit 1
+          fi
+
+          # Add the header directory for subsequent Configure and Build steps.
+          printf 'CPLUS_INCLUDE_PATH=%s\n' \
+            "$cs2menus_include_dir${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}" \
+            >> "$GITHUB_ENV"
+
+          echo "CS2Menus header: $cs2menus_header"
+          git -C "$cs2menus_dir" rev-parse HEAD
 
       - name: Configure
         shell: bash
