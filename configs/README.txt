@@ -1,7 +1,7 @@
-KHook SkinChanger 0.2.2
+KHook SkinChanger 0.3.0
 
-Built-in weapon/paint catalog: src/skin_catalog.cpp (source tree).
-No runtime skin config/database is required in this test build.
+No CounterStrikeSharp or CS2Menus plugin is required.
+The CenterHTML menu is built directly into khook_skinchanger.so.
 
 Chat commands:
   !skin
@@ -12,12 +12,10 @@ Chat commands:
 Menu hierarchy:
   category -> weapon -> skin
 
-CenterHTML is provided by the native CS2Menus Metamod dependency (ICS2Menus003).
-Default CS2Menus HTML navigation:
+Built-in menu controls:
   W/S = move
-  D   = select
+  D/E = select
   A   = back/exit
-(unless changed in CS2Menus configuration)
 
 Console fallback:
   kh_skin_menu

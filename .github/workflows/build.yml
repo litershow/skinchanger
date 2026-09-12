@@ -30,7 +30,6 @@ jobs:
           mkdir -p deps
           git clone --depth=1 --recurse-submodules https://github.com/alliedmodders/metamod-source.git deps/metamod-source
           git clone --depth=1 https://github.com/alliedmodders/ambuild.git deps/ambuild
-          git clone --depth=1 --branch 1.5.8 https://github.com/FemboyKZ/mm-cs2menus.git deps/mm-cs2menus
 
       - name: Install AMBuild
         run: |
@@ -43,13 +42,6 @@ jobs:
         run: |
           (cd deps && ./metamod-source/support/checkout-deps.sh -s cs2)
           test -d deps/hl2sdk-cs2
-
-      - name: Import current CS2Menus native API header
-        run: |
-          HEADER="$(find deps/mm-cs2menus -type f -name ics2menus.h -print -quit)"
-          test -n "$HEADER"
-          cp "$HEADER" src/ics2menus.h
-          grep -q "ICS2Menus003" src/ics2menus.h
 
       - name: Sync current Source2/KHook build scripts from Metamod
         run: |
@@ -80,6 +72,12 @@ jobs:
           set -euo pipefail
           SO=build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so
           test -f "$SO"
+
+          echo "Verifying v0.3 built-in menu binary does not depend on CS2Menus/libcurl:"
+          if readelf -d "$SO" | grep -Ei 'cs2menus|libcurl'; then
+            echo "ERROR: unexpected external menu/curl dependency"
+            exit 1
+          fi
 
           echo "Dynamic dependencies:"
           readelf -d "$SO" | grep NEEDED || true

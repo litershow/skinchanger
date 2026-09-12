@@ -1,10 +1,15 @@
 #include "plugin.h"
 #include "platform_offsets.h"
 #include "skin_catalog.h"
-#include "ics2menus.h"
 
 #include <iserver.h>
 #include <tier1/convar.h>
+#include <igameevents.h>
+#include <engine/igameeventsystem.h>
+#include <networksystem/inetworkmessages.h>
+#include <irecipientfilter.h>
+#include <in_buttons.h>
+#include "gameevents.pb.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -15,6 +20,7 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -22,6 +28,29 @@ IServerGameDLL* g_server = nullptr;
 IServerGameClients* g_gameClients = nullptr;
 ICvar* g_cvar = nullptr;
 ISchemaSystem* g_schemaSystem = nullptr;
+IGameEventManager2* g_gameEvents = nullptr;
+IGameEventSystem* g_gameEventSystem = nullptr;
+INetworkMessages* g_networkMessages = nullptr;
+
+constexpr const char* kGameEventManagerInterface = "GAMEEVENTSMANAGER002";
+
+class SingleRecipientFilter final : public IRecipientFilter
+{
+public:
+    explicit SingleRecipientFilter(CPlayerSlot slot)
+    {
+        if (slot.IsValid() && slot.Get() >= 0 && slot.Get() < ABSOLUTE_PLAYER_LIMIT)
+            m_recipients.Set(slot.Get());
+    }
+
+    NetChannelBufType_t GetNetworkBufType() const override { return BUF_RELIABLE; }
+    bool IsInitMessage() const override { return false; }
+    const CPlayerBitVec& GetRecipients() const override { return m_recipients; }
+    CPlayerSlot GetPredictedPlayerSlot() const override { return -1; }
+
+private:
+    CPlayerBitVec m_recipients;
+};
 
 bool ParseInt(const char* text, int& value)
 {
@@ -97,6 +126,27 @@ bool IsSkinChatCommand(const std::string& text)
 {
     return text == "!skin" || text == "/skin" || text == "!skins" || text == "/skins";
 }
+
+std::string EscapeHtml(const char* raw)
+{
+    if (!raw)
+        return {};
+
+    std::string out;
+    for (const char* p = raw; *p; ++p)
+    {
+        switch (*p)
+        {
+            case '&': out += "&amp;"; break;
+            case '<': out += "&lt;"; break;
+            case '>': out += "&gt;"; break;
+            case '\"': out += "&quot;"; break;
+            case '\'': out += "&#39;"; break;
+            default: out += *p; break;
+        }
+    }
+    return out;
+}
 }
 
 KHookSkinChanger g_KHookSkinChanger;
@@ -157,7 +207,6 @@ KHookSkinChanger::KHookSkinChanger()
       m_dispatchConCommandHook(&ICvar::DispatchConCommand, this,
                                &KHookSkinChanger::Hook_DispatchConCommand, nullptr)
 {
-    m_mainMenu = kInvalidMenuHandle;
 }
 
 bool KHookSkinChanger::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool late)
@@ -168,6 +217,9 @@ bool KHookSkinChanger::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxl
     GET_V_IFACE_ANY(GetServerFactory, g_gameClients, IServerGameClients, INTERFACEVERSION_SERVERGAMECLIENTS);
     GET_V_IFACE_CURRENT(GetEngineFactory, g_cvar, ICvar, CVAR_INTERFACE_VERSION);
     GET_V_IFACE_ANY(GetEngineFactory, g_schemaSystem, ISchemaSystem, SCHEMASYSTEM_INTERFACE_VERSION);
+    GET_V_IFACE_CURRENT(GetEngineFactory, g_gameEvents, IGameEventManager2, kGameEventManagerInterface);
+    GET_V_IFACE_CURRENT(GetEngineFactory, g_gameEventSystem, IGameEventSystem, GAMEEVENTSYSTEM_INTERFACE_VERSION);
+    GET_V_IFACE_CURRENT(GetEngineFactory, g_networkMessages, INetworkMessages, NETWORKMESSAGES_INTERFACE_VERSION);
     GET_V_IFACE_CURRENT(GetEngineFactory, m_gameResourceService, IGameResourceService,
                         GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
 
@@ -187,12 +239,10 @@ bool KHookSkinChanger::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxl
     META_CONVAR_REGISTER(FCVAR_RELEASE | FCVAR_CLIENT_CAN_EXECUTE | FCVAR_GAMEDLL);
 
     RefreshEntitySystem();
-    AcquireMenus();
 
     META_CONPRINTF("[KHSKIN] Loaded %s %s using KHook.\n", PLUGIN_DISPLAY_NAME, PLUGIN_FULL_VERSION);
+    META_CONPRINTF("[KHSKIN] Built-in CenterHTML menu enabled (no CS2Menus dependency).\n");
     META_CONPRINTF("[KHSKIN] Chat: !skin | console: kh_skin_menu, kh_skin, kh_skin_clear, kh_skin_info\n");
-    if (!m_menus)
-        META_CONPRINTF("[KHSKIN] CS2Menus (ICS2Menus003) is not loaded; !skin will become available when it loads.\n");
     return true;
 }
 
@@ -200,8 +250,6 @@ bool KHookSkinChanger::Unload(char* error, size_t maxlen)
 {
     (void)error;
     (void)maxlen;
-
-    DropMenus();
 
     if (g_server)
         m_gameFrameHook.Remove(g_server);
@@ -211,28 +259,13 @@ bool KHookSkinChanger::Unload(char* error, size_t maxlen)
         m_dispatchConCommandHook.Remove(g_cvar);
 
     for (int i = 0; i < kMaxPlayers; ++i)
+    {
         m_skins[i].clear();
+        m_menuStates[i] = {};
+    }
 
     m_entitySystem = nullptr;
-    m_menus = nullptr;
     return true;
-}
-
-void KHookSkinChanger::AllPluginsLoaded()
-{
-    AcquireMenus();
-}
-
-void KHookSkinChanger::OnPluginLoad(PluginId /*id*/)
-{
-    AcquireMenus();
-}
-
-void KHookSkinChanger::OnPluginUnload(PluginId /*id*/)
-{
-    // CS2Menus may be unloaded/reloaded independently. Re-resolve the factory
-    // instead of retaining a pointer into an unloaded Metamod plugin.
-    AcquireMenus();
 }
 
 void KHookSkinChanger::OnLevelInit(const char* mapName, const char* mapEntities,
@@ -247,7 +280,8 @@ void KHookSkinChanger::OnLevelInit(const char* mapName, const char* mapEntities,
 
     m_schema.ResetCache();
     RefreshEntitySystem();
-    AcquireMenus();
+    for (auto& state : m_menuStates)
+        state = {};
     META_CONPRINTF("[KHSKIN] Level init: %s\n", mapName ? mapName : "<unknown>");
 }
 
@@ -255,6 +289,8 @@ void KHookSkinChanger::OnLevelShutdown()
 {
     m_entitySystem = nullptr;
     m_frameCounter = 0;
+    for (auto& state : m_menuStates)
+        state = {};
 }
 
 KHook::Return<void> KHookSkinChanger::Hook_GameFrame(IServerGameDLL*, bool simulating,
@@ -268,6 +304,9 @@ KHook::Return<void> KHookSkinChanger::Hook_GameFrame(IServerGameDLL*, bool simul
 
     if (!m_entitySystem)
         RefreshEntitySystem();
+
+    if (m_entitySystem)
+        TickMenus();
 
     if (m_entitySystem && ++m_frameCounter >= kApplyEveryNFrames)
     {
@@ -311,117 +350,25 @@ KHook::Return<void> KHookSkinChanger::Hook_DispatchConCommand(ICvar*, ConCommand
     return { KHook::Action::Supersede };
 }
 
-void KHookSkinChanger::AcquireMenus()
-{
-    ICS2Menus* resolved = reinterpret_cast<ICS2Menus*>(g_SMAPI->MetaFactory(CS2MENUS_INTERFACE, nullptr, nullptr));
-    if (!resolved)
-    {
-        // Do not touch old menu handles here: if the provider disappeared,
-        // their owner DLL may already be gone. Just forget the interface.
-        m_menus = nullptr;
-        ForgetMenus();
-        return;
-    }
-
-    if (resolved != m_menus)
-    {
-        m_menus = resolved;
-        ForgetMenus();
-    }
-
-    if (m_mainMenu == kInvalidMenuHandle)
-        BuildMenus();
-}
-
-void KHookSkinChanger::BuildMenus()
-{
-    if (!m_menus || m_mainMenu != kInvalidMenuHandle)
-        return;
-
-    m_mainMenu = m_menus->CreateMenu(MenuType::Html, "SKIN CHANGER", nullptr);
-    if (m_mainMenu == kInvalidMenuHandle)
-        return;
-
-    m_ownedMenus.push_back(m_mainMenu);
-    m_menus->SetMenuForceType(m_mainMenu, true);
-    m_menus->SetExitButton(m_mainMenu, true);
-    m_menus->SetCloseOnSelect(m_mainMenu, false);
-
-    for (const CatalogGroup& group : GetSkinCatalog())
-    {
-        MenuHandle groupMenu = m_menus->CreateMenu(MenuType::Html, group.name, nullptr);
-        if (groupMenu == kInvalidMenuHandle)
-            continue;
-
-        m_ownedMenus.push_back(groupMenu);
-        m_menus->SetMenuForceType(groupMenu, true);
-        m_menus->SetExitButton(groupMenu, true);
-        m_menus->SetCloseOnSelect(groupMenu, false);
-
-        for (const CatalogWeapon& weapon : group.weapons)
-        {
-            MenuHandle skinMenu = m_menus->CreateMenu(MenuType::Html, weapon.name,
-                [](MenuHandle menu, int slot, int item)
-                {
-                    g_KHookSkinChanger.HandleSkinMenuSelection(static_cast<std::uint32_t>(menu), slot, item);
-                });
-
-            if (skinMenu == kInvalidMenuHandle)
-                continue;
-
-            m_ownedMenus.push_back(skinMenu);
-            m_menus->SetMenuForceType(skinMenu, true);
-            m_menus->SetExitButton(skinMenu, true);
-            m_menus->SetCloseOnSelect(skinMenu, true);
-
-            for (const CatalogSkin& skin : weapon.skins)
-            {
-                char info[128];
-                std::snprintf(info, sizeof(info), "%u|%d|%d|%.7f|%d",
-                              static_cast<unsigned>(weapon.itemDefinition), skin.paintKit,
-                              skin.seed, skin.wear, skin.statTrak);
-                m_menus->AddItem(skinMenu, skin.name, info, false);
-            }
-
-            m_menus->AddSubMenu(groupMenu, weapon.name, skinMenu, "");
-        }
-
-        m_menus->AddSubMenu(m_mainMenu, group.name, groupMenu, "");
-    }
-
-    META_CONPRINTF("[KHSKIN] HTML skin menu built using CS2Menus %s.\n", CS2MENUS_INTERFACE);
-}
-
-void KHookSkinChanger::DropMenus()
-{
-    if (m_menus)
-    {
-        for (auto it = m_ownedMenus.rbegin(); it != m_ownedMenus.rend(); ++it)
-        {
-            const MenuHandle handle = static_cast<MenuHandle>(*it);
-            if (handle != kInvalidMenuHandle && m_menus->IsValidMenu(handle))
-                m_menus->DestroyMenu(handle);
-        }
-    }
-    ForgetMenus();
-}
-
-void KHookSkinChanger::ForgetMenus()
-{
-    m_ownedMenus.clear();
-    m_mainMenu = kInvalidMenuHandle;
-}
-
 void KHookSkinChanger::OpenSkinMenu(CPlayerSlot slot)
 {
-    AcquireMenus();
-    if (!m_menus || m_mainMenu == kInvalidMenuHandle)
+    if (!slot.IsValid() || slot.Get() < 0 || slot.Get() >= kMaxPlayers)
+        return;
+
+    NativeMenuState& state = m_menuStates[slot.Get()];
+    state = {};
+    state.page = NativeMenuPage::Groups;
+    state.lastButtons = ReadButtons(slot);
+    state.refreshFrames = 0;
+
+    if (!SendCenterHtml(slot, BuildMenuHtml(slot), 2))
     {
-        Reply(slot, "[KHSKIN] !skin requires the native CS2Menus Metamod plugin (ICS2Menus003).\n");
+        state = {};
+        Reply(slot, "[KHSKIN] Could not send the built-in CenterHTML menu. Check server console.\n");
         return;
     }
 
-    m_menus->DisplayMenu(static_cast<MenuHandle>(m_mainMenu), slot.Get(), 0.0f);
+    Reply(slot, "[KHSKIN] Menu: W/S = move, D or E = select, A = back/close.\n");
 }
 
 void KHookSkinChanger::CommandOpenSkinMenu(CPlayerSlot slot)
@@ -429,38 +376,91 @@ void KHookSkinChanger::CommandOpenSkinMenu(CPlayerSlot slot)
     OpenSkinMenu(slot);
 }
 
-void KHookSkinChanger::HandleSkinMenuSelection(std::uint32_t menuValue, int slotNumber, int item)
+void KHookSkinChanger::CloseSkinMenu(CPlayerSlot slot, bool clearHud)
 {
-    if (!m_menus || slotNumber < 0 || slotNumber >= kMaxPlayers)
+    if (!slot.IsValid() || slot.Get() < 0 || slot.Get() >= kMaxPlayers)
         return;
 
-    const MenuHandle menu = static_cast<MenuHandle>(menuValue);
-    if (!m_menus->IsValidMenu(menu))
-        return;
+    m_menuStates[slot.Get()] = {};
+    if (clearHud)
+        SendCenterHtml(slot, " ", 1);
+}
 
-    const char* info = m_menus->GetItemInfo(menu, item);
-    if (!info || !*info)
-        return;
-
-    unsigned definition = 0;
-    SkinSelection selection;
-    if (std::sscanf(info, "%u|%d|%d|%f|%d", &definition, &selection.paintKit,
-                    &selection.seed, &selection.wear, &selection.statTrak) != 5 ||
-        definition == 0 || definition > std::numeric_limits<uint16_t>::max())
+std::size_t KHookSkinChanger::MenuItemCount(const NativeMenuState& state) const
+{
+    const auto& catalog = GetSkinCatalog();
+    switch (state.page)
     {
-        META_CONPRINTF("[KHSKIN] Invalid menu item info: %s\n", info);
+        case NativeMenuPage::Groups:
+            return catalog.size();
+        case NativeMenuPage::Weapons:
+            return state.group < catalog.size() ? catalog[state.group].weapons.size() : 0;
+        case NativeMenuPage::Skins:
+            if (state.group < catalog.size() && state.weapon < catalog[state.group].weapons.size())
+                return catalog[state.group].weapons[state.weapon].skins.size();
+            return 0;
+        default:
+            return 0;
+    }
+}
+
+void KHookSkinChanger::MenuMove(CPlayerSlot slot, int delta)
+{
+    NativeMenuState& state = m_menuStates[slot.Get()];
+    const std::size_t count = MenuItemCount(state);
+    if (count == 0)
+        return;
+
+    if (delta < 0)
+        state.cursor = (state.cursor + count - 1) % count;
+    else if (delta > 0)
+        state.cursor = (state.cursor + 1) % count;
+    state.refreshFrames = 0;
+}
+
+void KHookSkinChanger::MenuSelect(CPlayerSlot slot)
+{
+    NativeMenuState& state = m_menuStates[slot.Get()];
+    const auto& catalog = GetSkinCatalog();
+
+    if (state.page == NativeMenuPage::Groups)
+    {
+        if (state.cursor >= catalog.size())
+            return;
+        state.group = state.cursor;
+        state.page = NativeMenuPage::Weapons;
+        state.cursor = 0;
+        state.refreshFrames = 0;
         return;
     }
 
-    selection.wear = std::clamp(selection.wear, 0.000001f, 1.0f);
+    if (state.page == NativeMenuPage::Weapons)
+    {
+        if (state.group >= catalog.size() || state.cursor >= catalog[state.group].weapons.size())
+            return;
+        state.weapon = state.cursor;
+        state.page = NativeMenuPage::Skins;
+        state.cursor = 0;
+        state.refreshFrames = 0;
+        return;
+    }
 
-    const char* itemTextRaw = m_menus->GetItemText(menu, item);
-    const char* weaponTextRaw = m_menus->GetTitle(menu);
-    const std::string itemText = itemTextRaw ? itemTextRaw : "skin";
-    const std::string weaponText = weaponTextRaw ? weaponTextRaw : "weapon";
+    if (state.page != NativeMenuPage::Skins || state.group >= catalog.size() ||
+        state.weapon >= catalog[state.group].weapons.size())
+        return;
 
-    const CPlayerSlot slot(slotNumber);
-    if (!SetSkinForDefinition(slot, static_cast<uint16_t>(definition), selection))
+    const CatalogWeapon& weapon = catalog[state.group].weapons[state.weapon];
+    if (state.cursor >= weapon.skins.size())
+        return;
+
+    const CatalogSkin& skin = weapon.skins[state.cursor];
+    SkinSelection selection;
+    selection.paintKit = skin.paintKit;
+    selection.seed = skin.seed;
+    selection.wear = std::clamp(skin.wear, 0.000001f, 1.0f);
+    selection.statTrak = skin.statTrak;
+
+    if (!SetSkinForDefinition(slot, weapon.itemDefinition, selection))
     {
         Reply(slot, "[KHSKIN] Could not save/apply this skin. Check server console for schema errors.\n");
         return;
@@ -468,8 +468,233 @@ void KHookSkinChanger::HandleSkinMenuSelection(std::uint32_t menuValue, int slot
 
     char message[256];
     std::snprintf(message, sizeof(message), "[KHSKIN] Selected %s for %s (paint kit %d).\n",
-                  itemText.c_str(), weaponText.c_str(), selection.paintKit);
+                  skin.name, weapon.name, selection.paintKit);
     Reply(slot, message);
+    CloseSkinMenu(slot, true);
+}
+
+void KHookSkinChanger::MenuBack(CPlayerSlot slot)
+{
+    NativeMenuState& state = m_menuStates[slot.Get()];
+    if (state.page == NativeMenuPage::Skins)
+    {
+        state.page = NativeMenuPage::Weapons;
+        state.cursor = state.weapon;
+        state.refreshFrames = 0;
+    }
+    else if (state.page == NativeMenuPage::Weapons)
+    {
+        state.page = NativeMenuPage::Groups;
+        state.cursor = state.group;
+        state.refreshFrames = 0;
+    }
+    else
+    {
+        CloseSkinMenu(slot, true);
+    }
+}
+
+std::uint64_t KHookSkinChanger::ReadButtons(CPlayerSlot slot)
+{
+    CEntityInstance* pawn = GetPawn(slot);
+    if (!pawn)
+        return 0;
+
+    const std::ptrdiff_t movementServicesOffset = m_schema.FindOffset(
+        pawn->Schema_DynamicBinding().Get(), "m_pMovementServices");
+    if (movementServicesOffset < 0)
+    {
+        static bool warnedMovement = false;
+        if (!warnedMovement)
+        {
+            META_CONPRINTF("[KHSKIN] Menu input unavailable: schema field m_pMovementServices was not found.\n");
+            warnedMovement = true;
+        }
+        return 0;
+    }
+
+    void** movementServices = FieldPtr<void*>(pawn, movementServicesOffset);
+    if (!movementServices || !*movementServices)
+        return 0;
+
+    const std::ptrdiff_t buttonsOffset = m_schema.FindOffset("CPlayer_MovementServices", "m_nButtons");
+    const std::ptrdiff_t statesOffset = m_schema.FindOffset("CInButtonState", "m_pButtonStates");
+    if (buttonsOffset < 0 || statesOffset < 0)
+    {
+        static bool warnedButtons = false;
+        if (!warnedButtons)
+        {
+            META_CONPRINTF("[KHSKIN] Menu input unavailable: m_nButtons=%td m_pButtonStates=%td.\n",
+                           buttonsOffset, statesOffset);
+            warnedButtons = true;
+        }
+        return 0;
+    }
+
+    std::uint64_t* states = FieldPtr<std::uint64_t>(
+        *movementServices, buttonsOffset + statesOffset);
+    return states ? states[0] : 0;
+}
+
+void KHookSkinChanger::TickMenus()
+{
+    for (int i = 0; i < kMaxPlayers; ++i)
+    {
+        if (m_menuStates[i].page != NativeMenuPage::Closed)
+            TickMenu(CPlayerSlot(i));
+    }
+}
+
+void KHookSkinChanger::TickMenu(CPlayerSlot slot)
+{
+    NativeMenuState& state = m_menuStates[slot.Get()];
+    if (state.page == NativeMenuPage::Closed)
+        return;
+
+    if (!GetPawn(slot))
+    {
+        CloseSkinMenu(slot, false);
+        return;
+    }
+
+    const std::uint64_t buttons = ReadButtons(slot);
+    const std::uint64_t pressed = buttons & ~state.lastButtons;
+    state.lastButtons = buttons;
+
+    bool acted = false;
+    if (pressed & static_cast<std::uint64_t>(IN_FORWARD))
+    {
+        MenuMove(slot, -1);
+        acted = true;
+    }
+    else if (pressed & static_cast<std::uint64_t>(IN_BACK))
+    {
+        MenuMove(slot, 1);
+        acted = true;
+    }
+    else if (pressed & (static_cast<std::uint64_t>(IN_MOVERIGHT) | static_cast<std::uint64_t>(IN_USE)))
+    {
+        MenuSelect(slot);
+        acted = true;
+    }
+    else if (pressed & static_cast<std::uint64_t>(IN_MOVELEFT))
+    {
+        MenuBack(slot);
+        acted = true;
+    }
+
+    if (state.page == NativeMenuPage::Closed)
+        return;
+
+    if (acted || --state.refreshFrames <= 0)
+    {
+        state.refreshFrames = kMenuRefreshEveryNFrames;
+        SendCenterHtml(slot, BuildMenuHtml(slot), 2);
+    }
+}
+
+std::string KHookSkinChanger::BuildMenuHtml(CPlayerSlot slot) const
+{
+    if (!slot.IsValid() || slot.Get() < 0 || slot.Get() >= kMaxPlayers)
+        return {};
+
+    const NativeMenuState& state = m_menuStates[slot.Get()];
+    const auto& catalog = GetSkinCatalog();
+    if (state.page == NativeMenuPage::Closed)
+        return {};
+
+    std::string title;
+    std::vector<const char*> items;
+
+    if (state.page == NativeMenuPage::Groups)
+    {
+        title = "Choose weapon type";
+        for (const CatalogGroup& group : catalog)
+            items.push_back(group.name);
+    }
+    else if (state.page == NativeMenuPage::Weapons && state.group < catalog.size())
+    {
+        title = std::string("Choose weapon - ") + catalog[state.group].name;
+        for (const CatalogWeapon& weapon : catalog[state.group].weapons)
+            items.push_back(weapon.name);
+    }
+    else if (state.page == NativeMenuPage::Skins && state.group < catalog.size() &&
+             state.weapon < catalog[state.group].weapons.size())
+    {
+        const CatalogWeapon& weapon = catalog[state.group].weapons[state.weapon];
+        title = std::string("Choose skin - ") + weapon.name;
+        for (const CatalogSkin& skin : weapon.skins)
+            items.push_back(skin.name);
+    }
+
+    std::string html = "<font color='#66CCFF' class='fontSize-l'>KHook SkinChanger</font><br>";
+    html += "<font color='#FFFFFF'>" + EscapeHtml(title.c_str()) + "</font><br><br>";
+
+    if (items.empty())
+    {
+        html += "<font color='#FF7777'>No items</font><br>";
+    }
+    else
+    {
+        constexpr std::size_t kVisible = 7;
+        const std::size_t cursor = std::min(state.cursor, items.size() - 1);
+        std::size_t first = cursor > kVisible / 2 ? cursor - kVisible / 2 : 0;
+        if (first + kVisible > items.size())
+            first = items.size() > kVisible ? items.size() - kVisible : 0;
+        const std::size_t last = std::min(first + kVisible, items.size());
+
+        for (std::size_t i = first; i < last; ++i)
+        {
+            if (i == cursor)
+                html += "<font color='#7CFC00'>&gt; " + EscapeHtml(items[i]) + " &lt;</font><br>";
+            else
+                html += "<font color='#DDDDDD'>" + EscapeHtml(items[i]) + "</font><br>";
+        }
+    }
+
+    html += "<br><font color='#AAAAAA' class='fontSize-s'>W/S move  |  D/E select  |  A back</font>";
+    return html;
+}
+
+bool KHookSkinChanger::SendCenterHtml(CPlayerSlot slot, const std::string& html, int durationSeconds)
+{
+    if (!slot.IsValid() || slot.Get() < 0 || slot.Get() >= kMaxPlayers ||
+        !g_gameEvents || !g_gameEventSystem || !g_networkMessages)
+        return false;
+
+    IGameEvent* event = g_gameEvents->CreateEvent("show_survival_respawn_status", true);
+    if (!event)
+        return false;
+
+    event->SetString("loc_token", html.c_str());
+    event->SetInt("duration", std::max(1, durationSeconds));
+    event->SetPlayer("userid", slot);
+
+    INetworkMessageInternal* netMessage = g_networkMessages->FindNetworkMessagePartial("Source1LegacyGameEvent");
+    if (!netMessage)
+    {
+        g_gameEvents->FreeEvent(event);
+        return false;
+    }
+
+    CNetMessage* raw = netMessage->AllocateMessage();
+    if (!raw)
+    {
+        g_gameEvents->FreeEvent(event);
+        return false;
+    }
+
+    auto* data = raw->ToPB<CMsgSource1LegacyGameEvent>();
+    const bool serialized = g_gameEvents->SerializeEvent(event, data);
+    if (serialized)
+    {
+        SingleRecipientFilter filter(slot);
+        g_gameEventSystem->PostEventAbstract(-1, false, &filter, netMessage, data, 0);
+    }
+
+    delete raw;
+    g_gameEvents->FreeEvent(event);
+    return serialized;
 }
 
 void KHookSkinChanger::RefreshEntitySystem()
@@ -700,6 +925,7 @@ void KHookSkinChanger::ClearSlot(CPlayerSlot slot)
     if (!slot.IsValid() || slot.Get() < 0 || slot.Get() >= kMaxPlayers)
         return;
     m_skins[slot.Get()].clear();
+    m_menuStates[slot.Get()] = {};
 }
 
 void KHookSkinChanger::CommandSetSkin(CPlayerSlot slot, const CCommand& args)

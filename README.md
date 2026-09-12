@@ -1,14 +1,14 @@
-# CS2 KHook SkinChanger 0.2.2
+# CS2 KHook SkinChanger 0.3.0
 
 Native C++ skin changer for **Counter-Strike 2 + Metamod:Source 2.x + KHook**.
-It does not depend on CounterStrikeSharp. The weapon/econ logic runs directly as a
-Metamod plugin; the interactive CenterHTML UI uses the native **CS2Menus** Metamod API.
+This build contains its **own CenterHTML menu**. It does **not** require CounterStrikeSharp,
+CS2Menus, libcurl, or any second menu plugin.
 
-> Status: **0.2.2 test build**. Weapon paint/seed/wear/StatTrak plus the `!skin`
-> CenterHTML menu are implemented. Knife model/definition changing, gloves, agents and
+> Status: **0.3.0 test build**. Existing-weapon paint/seed/wear/StatTrak plus the built-in
+> `!skin` menu are implemented. Knife model/definition changing, gloves, agents and
 > persistent SteamID profiles are not part of this build yet.
 
-## `!skin` menu
+## `!skin` built-in menu
 
 In player chat:
 
@@ -27,35 +27,44 @@ Flow:
         -> skin
 ```
 
-The selected paint kit is stored for that player slot + weapon item definition. You do
-**not** have to hold that weapon while choosing it. When it later becomes the active
-weapon, the plugin applies the saved selection automatically.
-
-The built-in starter catalog is in `src/skin_catalog.cpp`; adding a skin is just adding
-its name + paint-kit ID under the corresponding weapon.
-
-### CenterHTML controls
-
-The UI is forced to HTML/center-screen mode. With the default CS2Menus bindings:
+Controls while the menu is open:
 
 ```text
-W / S  - move
-D      - select
-A      - back / exit
+W / S  - move up/down
+D or E - select
+A      - back / close
 ```
 
-The server owner can change these bindings in CS2Menus' own configuration.
+The player can still physically move while using W/A/S/D; this test build reads the
+normal Source2 button state rather than blocking movement commands.
 
-## Runtime dependencies
+The selection is stored by player slot + weapon item definition. The player does not
+have to hold the weapon while choosing a skin. When that weapon later becomes active,
+the saved paint selection is applied automatically.
 
-1. **Metamod:Source 2.x** with KHook support.
-2. **CS2Menus 1.5.8** (native Metamod plugin) for CenterHTML menus.
+The starter catalog is in `src/skin_catalog.cpp`.
 
-The skin changer can load without CS2Menus, but `!skin` will report that its menu
-provider is missing. Console skin commands remain available.
+## No CS2Menus dependency
 
-CS2Menus repository/release:
-https://github.com/FemboyKZ/mm-cs2menus
+0.3.0 removes `ICS2Menus003` entirely. CenterHTML is sent directly through current CS2
+engine interfaces using `show_survival_respawn_status` serialized as the native
+`Source1LegacyGameEvent` network message and targeted to one player.
+
+Menu input is read through runtime SchemaSystem fields:
+
+```text
+pawn.m_pMovementServices
+  -> CPlayer_MovementServices.m_nButtons
+     -> CInButtonState.m_pButtonStates[0]
+```
+
+This means you can remove the separate `addons/cs2menus` plugin. In particular, the
+skin changer no longer inherits CS2Menus' `libcurl-gnutls.so.4` runtime dependency.
+
+## Runtime dependency
+
+Only **Metamod:Source 2.x with KHook support** is required by this plugin. The current
+project is intended for the Metamod 2.0 dev line used by CS2, including build 1467.
 
 ## Console fallback commands
 
@@ -72,85 +81,57 @@ Example:
 kh_skin 282 0 0.0001 -1
 ```
 
-## What the plugin does internally
+## Internals
 
 - KHook virtual hook on `IServerGameDLL::GameFrame`.
 - KHook virtual hook on `IServerGameClients::ClientDisconnect`.
-- KHook virtual hook on `ICvar::DispatchConCommand` for exact `!skin`/aliases in
-  `say` and `say_team`.
-- `ICS2Menus003` is obtained with Metamod `MetaFactory`; it is re-resolved when
-  plugins load/unload so the skin changer does not intentionally retain a dead menu
-  provider pointer.
-- Runtime SchemaSystem resolves econ/player fields by class + field name instead of
-  hardcoding their normal schema offsets.
-- Applies `m_nFallbackPaintKit`, `m_nFallbackSeed`, `m_flFallbackWear`,
-  `m_nFallbackStatTrak` and fallback item-id state, then calls `NetworkStateChanged`.
-- No weapon delete/re-give loop in this MVP.
+- KHook virtual hook on `ICvar::DispatchConCommand` for exact `!skin` aliases.
+- Built-in CenterHTML renderer using `IGameEventManager2`, `IGameEventSystem` and
+  `INetworkMessages`.
+- Runtime SchemaSystem resolves player, movement, weapon and econ fields by name.
+- Direct `CConcreteEntityList` lookup with handle serial validation; the plugin does not
+  leave an unresolved Linux dependency on `CEntitySystem::GetEntityIdentity()`.
+- Applies fallback paint kit / seed / wear / StatTrak / item-id state and calls
+  `NetworkStateChanged`.
+- No delete/re-give weapon loop in this MVP.
 
 One platform-specific bridge remains in `src/platform_offsets.h` for locating
-`CGameEntitySystem` through the game resource service. This should be the first value
-checked after a major CS2 binary-layout update if entity access breaks.
-
-
-### Metamod 1467 / Linux entity lookup fix
-
-`0.2.2` no longer calls `CEntitySystem::GetEntityIdentity()` / `GetEntityInstance()` from
-the plugin binary. Current hl2sdk declares `GetEntityInstance()` inline, but that wrapper
-calls the non-inline `GetEntityIdentity()` symbol; on current Linux CS2 that symbol is not
-exported for third-party plugins and caused Metamod to fail loading with `undefined symbol`
-before `Load()` ran. Entity lookup now reads the public `CConcreteEntityList` layout from
-hl2sdk directly and validates entity-handle serials locally.
+`CGameEntitySystem` through the game resource service.
 
 ## Build entirely on GitHub (no WSL)
 
 1. Create an empty GitHub repository.
 2. Upload **all contents** of this source archive to the repository root.
-3. Open **Actions -> Build CS2 KHook SkinChanger -> Run workflow** (or push to
-   `main`/`master`).
-4. The workflow clones current Metamod/HL2SDK/AMBuild and pins the public menu header to
-   **mm-cs2menus 1.5.8 / `ICS2Menus003`**.
-5. After a green build, download the `khook-skinchanger-linux` artifact.
-6. It contains `khook_skinchanger-linux.zip`; extract its `cs2/` tree into the server's
-   `game/csgo/` directory.
-7. Install the separate CS2Menus 1.5.8 release into the same server root.
-8. Restart and check:
+3. Open **Actions -> Build CS2 KHook SkinChanger -> Run workflow**.
+4. The workflow downloads current Metamod, the matching CS2 HL2SDK and AMBuild.
+5. It generates the current `gameevents.proto` protobuf classes from HL2SDK and builds
+   the Linux x86_64 plugin inside **Ubuntu 20.04**.
+6. Download artifact `khook-skinchanger-linux` and extract its `cs2/` tree into the
+   server's `game/csgo/` directory.
+7. Restart or reload the plugin, then check:
 
 ```text
 meta list
+meta info 1
 ```
 
 Then join and type `!skin`.
 
-The workflow's finished server artifact contains the compiled Linux x86_64 `.so`, VDF,
-README and config note. The ZIP you are reading now is the **GitHub-ready source ZIP**;
-the compiled binary is produced by GitHub Actions because this environment does not
-contain a live CS2 SDK/server toolchain to verify a real server build.
-
-## Project layout
-
-- `src/plugin.cpp` - lifecycle, KHook, chat command, menus, player/weapon traversal and
-  econ application.
-- `src/skin_catalog.cpp` - weapon groups and starter skin catalog.
-- `src/schema_resolver.*` - runtime SchemaSystem field lookup.
-- `src/platform_offsets.h` - small platform-dependent bridge.
-- `.github/workflows/build.yml` - Linux x86_64 cloud build and package.
-- `.github/workflows/static-check.yml` - architecture/metadata sanity checks.
+The workflow verifies that the finished `.so` does not require a GLIBC version newer
+than 2.31, does not contain the old unresolved entity-system lookup, and does not link
+against CS2Menus/libcurl.
 
 ## Current limitations
 
-Selections are kept in memory and are cleared when a player disconnects. There is no
-SteamID64 persistence yet. `Default` in the menu writes fallback paint kit `0`; it is
-not intended as a perfect restoration of every client inventory attribute. Knife model
-and item-definition replacement is deliberately isolated for a later layer because it
-needs a safe subclass/model refresh path on the current CS2 build.
+Selections are in memory and disappear on disconnect. `Default` writes fallback paint
+kit `0`; it is not a perfect restoration of every inventory attribute. Knife model and
+item-definition replacement is intentionally left for a separate layer because it needs
+safe subclass/model refresh on the current game build.
+
+The built-in CenterHTML path is new and should be tested on a live server. If `!skin`
+displays but W/S/D/E/A do nothing, run `kh_skin_menu` while alive and send the server
+console output; the likely adjustment is then limited to the movement-button schema path.
 
 This is a server plugin only. It contains no client injection, VAC bypass, ban bypass or
-plugin-hiding mechanism. Check Valve/Steam community-server rules before running custom
-cosmetic overrides on a public server.
-
-## Linux ABI / old hosting compatibility
-
-The GitHub Actions build intentionally runs inside **Ubuntu 20.04** even though the GitHub runner itself is newer. This keeps the generated `khook_skinchanger.so` compatible with **glibc 2.31** instead of accidentally linking against the newer glibc from Ubuntu 24.04.
-
-The workflow also prints all required `GLIBC_*` / `GLIBCXX_*` symbol versions and fails the build if the plugin requires a GLIBC version newer than 2.31. If a host is older than glibc 2.31, run `ldd --version` on that host and use an older compatibility image for the build.
-
+plugin-hiding mechanism. Check Valve/Steam community-server rules before using cosmetic
+overrides on a public server.

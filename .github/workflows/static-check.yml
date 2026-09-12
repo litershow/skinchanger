@@ -10,13 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure new hook architecture only
+      - name: Ensure KHook + built-in CenterHTML architecture
         run: |
           grep -R "KHook::Virtual" src/plugin.h
           grep -R "DispatchConCommand" src/plugin.*
           grep -R "!skin" src/plugin.cpp
-          grep -R "CreateMenu(MenuType::Html" src/plugin.cpp
-          grep -R "AddSubMenu" src/plugin.cpp
+          grep -R "show_survival_respawn_status" src/plugin.cpp
+          grep -R "Source1LegacyGameEvent" src/plugin.cpp
+          grep -R "m_pButtonStates" src/plugin.cpp
+          grep -R "IN_FORWARD" src/plugin.cpp
+          ! grep -R -E "ICS2Menus|ics2menus|CS2MENUS_INTERFACE" src AMBuilder
           ! grep -R -E "SH_ADD_HOOK|SH_REMOVE_HOOK|SH_MEMBER" src
           grep -R "Schema_DynamicBinding" src/plugin.cpp
           ! grep -R "GetEntityInstance(" src/plugin.cpp
