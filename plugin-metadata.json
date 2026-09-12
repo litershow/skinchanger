@@ -2,10 +2,10 @@
   "name": "khook_skinchanger",
   "alias": "khook_skinchanger",
   "display_name": "KHook SkinChanger",
-  "description": "Server-side CS2 weapon skin menu for Metamod 2/KHook with built-in CenterHTML UI",
+  "description": "Server-side CS2 weapon skin menu for Metamod 2/KHook with built-in safe center-HUD UI",
   "author": "CS2 community",
   "url": "https://github.com/",
   "log_tag": "KHSKIN",
   "license": "MIT",
-  "version": "0.3.1.{{git-shorthash}}"
+  "version": "0.3.2.{{git-shorthash}}"
 }

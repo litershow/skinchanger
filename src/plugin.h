@@ -70,6 +70,7 @@ public:
     void CommandClearSkin(CPlayerSlot slot);
     void CommandSkinInfo(CPlayerSlot slot);
     void CommandOpenSkinMenu(CPlayerSlot slot);
+    bool SendCenterTextForTest(CPlayerSlot slot, const std::string& text);
 
     const char* GetAuthor() override { return PLUGIN_AUTHOR; }
     const char* GetName() override { return PLUGIN_DISPLAY_NAME; }
@@ -83,7 +84,7 @@ public:
 private:
     static constexpr int kMaxPlayers = 64;
     static constexpr int kApplyEveryNFrames = 8;
-    static constexpr int kMenuRefreshEveryNFrames = 8;
+    static constexpr int kMenuRefreshEveryNFrames = 32;
 
     void RefreshEntitySystem();
     void TickPlayers();
@@ -99,7 +100,7 @@ private:
     bool SetSkinForDefinition(CPlayerSlot slot, uint16_t itemDefinition, const SkinSelection& selection);
     void ClearSlot(CPlayerSlot slot);
 
-    // Built-in CenterHTML menu. No external CS2Menus plugin is required.
+    // Built-in center-HUD menu. No external CS2Menus plugin is required.
     void OpenSkinMenu(CPlayerSlot slot);
     void CloseSkinMenu(CPlayerSlot slot, bool clearHud = true);
     void TickMenus();
@@ -109,8 +110,8 @@ private:
     void MenuBack(CPlayerSlot slot);
     std::size_t MenuItemCount(const NativeMenuState& state) const;
     std::uint64_t ReadButtons(CPlayerSlot slot);
-    bool SendCenterHtml(CPlayerSlot slot, const std::string& html, int durationSeconds = 2);
-    std::string BuildMenuHtml(CPlayerSlot slot) const;
+    bool SendCenterText(CPlayerSlot slot, const std::string& text);
+    std::string BuildMenuText(CPlayerSlot slot) const;
 
     template <typename T>
     static T* FieldPtr(void* base, std::ptrdiff_t offset)

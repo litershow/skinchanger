@@ -14,13 +14,13 @@ for sdk_target in MMSPlugin.sdk_targets:
     'src/skin_catalog.cpp',
   ]
 
-  # CenterHTML is sent as the native Source1LegacyGameEvent net message.
-  # Generate the same protobuf types from the current CS2 HL2SDK at build time.
+  # Built-in menu uses the native TextMsg user message.
+  # Generate the current SDK protobuf at build time.
   binary.custom = [builder.tools.Protoc(protoc = sdk_target.protoc, sources = [
     os.path.join(sdk['path'], 'common', 'valveextensions.proto'),
     os.path.join(sdk['path'], 'common', 'network_connection.proto'),
     os.path.join(sdk['path'], 'common', 'networkbasetypes.proto'),
-    os.path.join(sdk['path'], 'game', 'shared', 'gameevents.proto'),
+    os.path.join(sdk['path'], 'game', 'shared', 'usermessages.proto'),
   ])]
 
 MMSPlugin.tasks += builder.Add(project)

@@ -1,47 +1,14 @@
-# v0.3.1 hotfix
-
-- Do not fail the whole plugin when CenterHTML-only engine interfaces are unavailable.
-- Try `GAMEEVENTSMANAGER002` through EngineFactory first, then Source2Server vfunc 91 fallback.
-- Add `kh_skin_diag` backend diagnostics.
-- Keep `INetworkMessages` and `IGameEventSystem` optional at startup and report them explicitly.
-
 # Roadmap
 
-## 0.3.0 — current test build
+## 0.3.2 safety hotfix
+- Removed `show_survival_respawn_status` / Source1LegacyGameEvent renderer.
+- Removed guessed `IGameEventManager2` server-vtable access.
+- Added safe TextMsg center menu and `kh_skin_hudtest`.
+- Keep W/S/D/E/A input through runtime schema.
 
-- own CenterHTML renderer; no CS2Menus / CounterStrikeSharp dependency
-- targeted `show_survival_respawn_status` game-event network message
-- W/S navigation, D/E select, A back through `CPlayer_MovementServices::m_nButtons`
-- Metamod 1467 Linux direct `CConcreteEntityList` entity resolver
-- KHook lifecycle, chat interception and GameFrame loop
-- runtime SchemaSystem field resolution
-- paint kit / seed / wear / StatTrak for existing weapons
-- per-slot + item-definition selections
-- `!skin`, `/skin`, `!skins`, `/skins`
-- category -> weapon -> skin hierarchy
-- GitHub Linux x86_64 build using Ubuntu 20.04 compatibility container
-
-## 0.4 — persistence
-
-- SteamID64 keyed profiles
-- JSON first, SQLite optional
-- restore selections on reconnect
-
-## 0.5 — knife layer
-
-- safe item-definition change path
-- subclass/model refresh isolated from basic paint application
-- knife selection menu
-- separate diagnostics for model/subclass failures
-
-## 0.6 — catalog/data
-
-- external paint-kit catalog file instead of recompiling
-- pagination/search improvements for a much larger skin list
-- seed/wear presets
-
-## 0.7 — extras
-
-- gloves
-- agents
-- stickers / nametag where the current server econ path permits
+## Next
+- Validate menu input on live Metamod 2.0 build 1467+.
+- Optional richer UI via Valve `custom_hud_layout` once a stable native path is proven.
+- Persist selections by SteamID.
+- Knife subclass/model switching.
+- Gloves / agents / stickers.

@@ -4,12 +4,11 @@
 
 #include <iserver.h>
 #include <tier1/convar.h>
-#include <igameevents.h>
 #include <engine/igameeventsystem.h>
 #include <networksystem/inetworkmessages.h>
 #include <irecipientfilter.h>
 #include <in_buttons.h>
-#include "gameevents.pb.h"
+#include "usermessages.pb.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -28,28 +27,9 @@ IServerGameDLL* g_server = nullptr;
 IServerGameClients* g_gameClients = nullptr;
 ICvar* g_cvar = nullptr;
 ISchemaSystem* g_schemaSystem = nullptr;
-IGameEventManager2* g_gameEvents = nullptr;
 IGameEventSystem* g_gameEventSystem = nullptr;
 INetworkMessages* g_networkMessages = nullptr;
-
-constexpr const char* kGameEventManagerInterface = "GAMEEVENTSMANAGER002";
-constexpr std::size_t kSource2ServerGameEventManagerVtableIndex = 91;
-bool g_gameEventsViaServerVFunc = false;
-
-template <typename Ret>
-Ret CallVirtualNoArgs(void* instance, std::size_t index)
-{
-    if (!instance)
-        return Ret{};
-
-    void*** object = reinterpret_cast<void***>(instance);
-    if (!object || !*object || !(*object)[index])
-        return Ret{};
-
-    using Fn = Ret (*)(void*);
-    auto fn = reinterpret_cast<Fn>((*object)[index]);
-    return fn(instance);
-}
+constexpr int kHudPrintCenter = 4;
 
 class SingleRecipientFilter final : public IRecipientFilter
 {
@@ -144,36 +124,18 @@ bool IsSkinChatCommand(const std::string& text)
     return text == "!skin" || text == "/skin" || text == "!skins" || text == "/skins";
 }
 
-std::string EscapeHtml(const char* raw)
-{
-    if (!raw)
-        return {};
-
-    std::string out;
-    for (const char* p = raw; *p; ++p)
-    {
-        switch (*p)
-        {
-            case '&': out += "&amp;"; break;
-            case '<': out += "&lt;"; break;
-            case '>': out += "&gt;"; break;
-            case '\"': out += "&quot;"; break;
-            case '\'': out += "&#39;"; break;
-            default: out += *p; break;
-        }
-    }
-    return out;
-}
-
 void PrintMenuDiagnostics(CPlayerSlot slot)
 {
+    INetworkMessageInternal* textMsg = g_networkMessages
+        ? g_networkMessages->FindNetworkMessagePartial("TextMsg")
+        : nullptr;
+
     char line[512];
     std::snprintf(line, sizeof(line),
-                  "[KHSKIN] menu backend: GameEvents=%s (%s), GameEventSystem=%s, NetworkMessages=%s\n",
-                  g_gameEvents ? "OK" : "MISSING",
-                  g_gameEvents ? (g_gameEventsViaServerVFunc ? "server-vfunc" : "engine-factory") : "unavailable",
+                  "[KHSKIN] menu backend: renderer=TextMsg, GameEventSystem=%s, NetworkMessages=%s, TextMsg=%s\n",
                   g_gameEventSystem ? "OK" : "MISSING",
-                  g_networkMessages ? "OK" : "MISSING");
+                  g_networkMessages ? "OK" : "MISSING",
+                  textMsg ? "OK" : "MISSING");
     Reply(slot, line);
 }
 }
@@ -193,7 +155,7 @@ CON_COMMAND_F(kh_skin, "kh_skin <paintkit> [seed] [wear] [stattrak] - apply to a
     g_KHookSkinChanger.CommandSetSkin(slot, args);
 }
 
-CON_COMMAND_F(kh_skin_menu, "Open KHook SkinChanger HTML menu",
+CON_COMMAND_F(kh_skin_menu, "Open KHook SkinChanger center menu",
               FCVAR_CLIENT_CAN_EXECUTE | FCVAR_GAMEDLL)
 {
     const CPlayerSlot slot = context.GetPlayerSlot();
@@ -209,6 +171,19 @@ CON_COMMAND_F(kh_skin_diag, "Show KHook SkinChanger built-in menu backend status
               FCVAR_CLIENT_CAN_EXECUTE | FCVAR_GAMEDLL)
 {
     PrintMenuDiagnostics(context.GetPlayerSlot());
+}
+
+CON_COMMAND_F(kh_skin_hudtest, "Send a safe TextMsg center-HUD test",
+              FCVAR_CLIENT_CAN_EXECUTE | FCVAR_GAMEDLL)
+{
+    const CPlayerSlot slot = context.GetPlayerSlot();
+    if (!slot.IsValid())
+    {
+        META_CONPRINTF("[KHSKIN] kh_skin_hudtest is a player command.\n");
+        return;
+    }
+    if (!g_KHookSkinChanger.SendCenterTextForTest(slot, "KHook SkinChanger HUD OK"))
+        Reply(slot, "[KHSKIN] TextMsg HUD test failed. Run kh_skin_diag.\n");
 }
 
 CON_COMMAND_F(kh_skin_clear, "Clear saved skin for the active weapon",
@@ -255,23 +230,10 @@ bool KHookSkinChanger::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxl
     GET_V_IFACE_CURRENT(GetEngineFactory, m_gameResourceService, IGameResourceService,
                         GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
 
-    // Menu/network interfaces must not make the whole skin changer fail to load.
-    // GAMEEVENTSMANAGER002 is not consistently exposed by EngineFactory on current CS2.
-    // First try the public factory, then use the same Source2Server vfunc path used by
-    // current native CS2 plugins. NetworkMessages/GameEventSystem remain EngineFactory
-    // interfaces and are acquired independently so diagnostics can name what is missing.
+    // Menu renderer uses only the same public engine interfaces and TextMsg path
+    // used by current native CS2 Metamod plugins (for example CS2Fixes).
+    // No guessed server vtable indices and no legacy game-event serialization.
     CreateInterfaceFn engineFactory = ismm->GetEngineFactory();
-    g_gameEvents = engineFactory
-        ? static_cast<IGameEventManager2*>(engineFactory(kGameEventManagerInterface, nullptr))
-        : nullptr;
-    g_gameEventsViaServerVFunc = false;
-    if (!g_gameEvents && g_server)
-    {
-        g_gameEvents = CallVirtualNoArgs<IGameEventManager2*>(
-            g_server, kSource2ServerGameEventManagerVtableIndex);
-        g_gameEventsViaServerVFunc = (g_gameEvents != nullptr);
-    }
-
     g_gameEventSystem = engineFactory
         ? static_cast<IGameEventSystem*>(engineFactory(GAMEEVENTSYSTEM_INTERFACE_VERSION, nullptr))
         : nullptr;
@@ -297,13 +259,11 @@ bool KHookSkinChanger::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxl
     RefreshEntitySystem();
 
     META_CONPRINTF("[KHSKIN] Loaded %s %s using KHook.\n", PLUGIN_DISPLAY_NAME, PLUGIN_FULL_VERSION);
-    META_CONPRINTF("[KHSKIN] Built-in CenterHTML menu enabled (no CS2Menus dependency).\n");
-    META_CONPRINTF("[KHSKIN] Menu backend: GameEvents=%s (%s), GameEventSystem=%s, NetworkMessages=%s\n",
-                   g_gameEvents ? "OK" : "MISSING",
-                   g_gameEvents ? (g_gameEventsViaServerVFunc ? "server-vfunc" : "engine-factory") : "unavailable",
+    META_CONPRINTF("[KHSKIN] Built-in safe center menu enabled (TextMsg; no CS2Menus dependency).\n");
+    META_CONPRINTF("[KHSKIN] Menu backend: GameEventSystem=%s, NetworkMessages=%s\n",
                    g_gameEventSystem ? "OK" : "MISSING",
                    g_networkMessages ? "OK" : "MISSING");
-    META_CONPRINTF("[KHSKIN] Chat: !skin | console: kh_skin_menu, kh_skin_diag, kh_skin, kh_skin_clear, kh_skin_info\n");
+    META_CONPRINTF("[KHSKIN] Chat: !skin | console: kh_skin_menu, kh_skin_diag, kh_skin_hudtest, kh_skin, kh_skin_clear, kh_skin_info\n");
     return true;
 }
 
@@ -326,10 +286,8 @@ bool KHookSkinChanger::Unload(char* error, size_t maxlen)
     }
 
     m_entitySystem = nullptr;
-    g_gameEvents = nullptr;
     g_gameEventSystem = nullptr;
     g_networkMessages = nullptr;
-    g_gameEventsViaServerVFunc = false;
     return true;
 }
 
@@ -426,10 +384,10 @@ void KHookSkinChanger::OpenSkinMenu(CPlayerSlot slot)
     state.lastButtons = ReadButtons(slot);
     state.refreshFrames = 0;
 
-    if (!SendCenterHtml(slot, BuildMenuHtml(slot), 2))
+    if (!SendCenterText(slot, BuildMenuText(slot)))
     {
         state = {};
-        Reply(slot, "[KHSKIN] Could not send the built-in CenterHTML menu.\n");
+        Reply(slot, "[KHSKIN] Could not send the built-in center menu.\n");
         PrintMenuDiagnostics(slot);
         Reply(slot, "[KHSKIN] Run kh_skin_diag in console and send the output if any backend is MISSING.\n");
         return;
@@ -450,7 +408,7 @@ void KHookSkinChanger::CloseSkinMenu(CPlayerSlot slot, bool clearHud)
 
     m_menuStates[slot.Get()] = {};
     if (clearHud)
-        SendCenterHtml(slot, " ", 1);
+        SendCenterText(slot, " ");
 }
 
 std::size_t KHookSkinChanger::MenuItemCount(const NativeMenuState& state) const
@@ -656,11 +614,11 @@ void KHookSkinChanger::TickMenu(CPlayerSlot slot)
     if (acted || --state.refreshFrames <= 0)
     {
         state.refreshFrames = kMenuRefreshEveryNFrames;
-        SendCenterHtml(slot, BuildMenuHtml(slot), 2);
+        SendCenterText(slot, BuildMenuText(slot));
     }
 }
 
-std::string KHookSkinChanger::BuildMenuHtml(CPlayerSlot slot) const
+std::string KHookSkinChanger::BuildMenuText(CPlayerSlot slot) const
 {
     if (!slot.IsValid() || slot.Get() < 0 || slot.Get() >= kMaxPlayers)
         return {};
@@ -694,12 +652,11 @@ std::string KHookSkinChanger::BuildMenuHtml(CPlayerSlot slot) const
             items.push_back(skin.name);
     }
 
-    std::string html = "<font color='#66CCFF' class='fontSize-l'>KHook SkinChanger</font><br>";
-    html += "<font color='#FFFFFF'>" + EscapeHtml(title.c_str()) + "</font><br><br>";
+    std::string text = "KHook SkinChanger\n" + title + "\n\n";
 
     if (items.empty())
     {
-        html += "<font color='#FF7777'>No items</font><br>";
+        text += "No items\n";
     }
     else
     {
@@ -712,63 +669,60 @@ std::string KHookSkinChanger::BuildMenuHtml(CPlayerSlot slot) const
 
         for (std::size_t i = first; i < last; ++i)
         {
-            if (i == cursor)
-                html += "<font color='#7CFC00'>&gt; " + EscapeHtml(items[i]) + " &lt;</font><br>";
-            else
-                html += "<font color='#DDDDDD'>" + EscapeHtml(items[i]) + "</font><br>";
+            text += (i == cursor) ? "> " : "  ";
+            text += items[i];
+            text += (i == cursor) ? " <\n" : "\n";
         }
     }
 
-    html += "<br><font color='#AAAAAA' class='fontSize-s'>W/S move  |  D/E select  |  A back</font>";
-    return html;
+    text += "\nW/S move | D/E select | A back";
+    return text;
 }
 
-bool KHookSkinChanger::SendCenterHtml(CPlayerSlot slot, const std::string& html, int durationSeconds)
+bool KHookSkinChanger::SendCenterText(CPlayerSlot slot, const std::string& text)
 {
     if (!slot.IsValid() || slot.Get() < 0 || slot.Get() >= kMaxPlayers)
         return false;
-
-    if (!g_gameEvents || !g_gameEventSystem || !g_networkMessages)
+    if (!g_gameEventSystem || !g_networkMessages)
         return false;
 
-    IGameEvent* event = g_gameEvents->CreateEvent("show_survival_respawn_status", true);
-    if (!event)
-    {
-        META_CONPRINTF("[KHSKIN] CenterHTML: CreateEvent(show_survival_respawn_status) failed.\n");
-        return false;
-    }
-
-    event->SetString("loc_token", html.c_str());
-    event->SetInt("duration", std::max(1, durationSeconds));
-    event->SetPlayer("userid", slot);
-
-    INetworkMessageInternal* netMessage = g_networkMessages->FindNetworkMessagePartial("Source1LegacyGameEvent");
+    INetworkMessageInternal* netMessage = g_networkMessages->FindNetworkMessagePartial("TextMsg");
     if (!netMessage)
     {
-        META_CONPRINTF("[KHSKIN] CenterHTML: Source1LegacyGameEvent network message was not found.\n");
-        g_gameEvents->FreeEvent(event);
+        META_CONPRINTF("[KHSKIN] Center menu: TextMsg network message was not found.\n");
         return false;
     }
 
     CNetMessage* raw = netMessage->AllocateMessage();
     if (!raw)
     {
-        META_CONPRINTF("[KHSKIN] CenterHTML: AllocateMessage failed.\n");
-        g_gameEvents->FreeEvent(event);
+        META_CONPRINTF("[KHSKIN] Center menu: TextMsg AllocateMessage failed.\n");
         return false;
     }
 
-    auto* data = raw->ToPB<CMsgSource1LegacyGameEvent>();
-    const bool serialized = g_gameEvents->SerializeEvent(event, data);
-    if (serialized)
+    auto* data = raw->ToPB<CUserMessageTextMsg>();
+    if (!data)
     {
-        SingleRecipientFilter filter(slot);
-        g_gameEventSystem->PostEventAbstract(-1, false, &filter, netMessage, data, 0);
+        META_CONPRINTF("[KHSKIN] Center menu: TextMsg protobuf cast failed.\n");
+        delete raw;
+        return false;
     }
 
-    delete raw;
-    g_gameEvents->FreeEvent(event);
-    return serialized;
+    data->set_dest(kHudPrintCenter);
+    data->add_param(text);
+
+    SingleRecipientFilter filter(slot);
+    g_gameEventSystem->PostEventAbstract(-1, false, &filter, netMessage, data, 0);
+
+    // CNetMessage/ToPB ownership is the same allocation; current native CS2 plugins
+    // delete the protobuf message after PostEventAbstract.
+    delete data;
+    return true;
+}
+
+bool KHookSkinChanger::SendCenterTextForTest(CPlayerSlot slot, const std::string& text)
+{
+    return SendCenterText(slot, text);
 }
 
 void KHookSkinChanger::RefreshEntitySystem()

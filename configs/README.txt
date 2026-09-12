@@ -1,24 +1,17 @@
-KHook SkinChanger 0.3.0
+KHook SkinChanger 0.3.2
 
-No CounterStrikeSharp or CS2Menus plugin is required.
-The CenterHTML menu is built directly into khook_skinchanger.so.
+No CS2Menus plugin is required.
+The built-in menu uses Source2 TextMsg center HUD output.
 
-Chat commands:
+Chat:
   !skin
-  /skin
-  !skins
-  /skins
 
-Menu hierarchy:
-  category -> weapon -> skin
-
-Built-in menu controls:
-  W/S = move
-  D/E = select
-  A   = back/exit
-
-Console fallback:
+Diagnostics:
+  kh_skin_diag
+  kh_skin_hudtest
   kh_skin_menu
-  kh_skin <paintkit> [seed] [wear] [stattrak]
-  kh_skin_info
-  kh_skin_clear
+
+Controls:
+  W/S = move
+  D or E = select
+  A = back/close

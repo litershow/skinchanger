@@ -10,15 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure KHook + built-in CenterHTML architecture
+      - name: Ensure KHook + safe built-in center-menu architecture
         run: |
           grep -R "KHook::Virtual" src/plugin.h
           grep -R "DispatchConCommand" src/plugin.*
           grep -R "!skin" src/plugin.cpp
-          grep -R "show_survival_respawn_status" src/plugin.cpp
+          grep -R "FindNetworkMessagePartial(\"TextMsg\")" src/plugin.cpp
           grep -R "kh_skin_diag" src/plugin.cpp
-          grep -R "kSource2ServerGameEventManagerVtableIndex = 91" src/plugin.cpp
-          grep -R "Source1LegacyGameEvent" src/plugin.cpp
+          ! grep -R "kSource2ServerGameEventManagerVtableIndex" src/plugin.cpp
+          grep -R "CUserMessageTextMsg" src/plugin.cpp
+          ! grep -R "Source1LegacyGameEvent\|show_survival_respawn_status\|CallVirtualNoArgs" src/plugin.cpp
           grep -R "m_pButtonStates" src/plugin.cpp
           grep -R "IN_FORWARD" src/plugin.cpp
           ! grep -R -E "ICS2Menus|ics2menus|CS2MENUS_INTERFACE" src AMBuilder
@@ -30,8 +31,8 @@ jobs:
       - name: Validate metadata JSON
         run: python3 -m json.tool plugin-metadata.json >/dev/null
 
-      - name: Ensure menu-only interfaces are not fatal GET_V_IFACE calls
+      - name: Ensure menu interfaces are optional and no guessed vtable is used
         run: |
-          ! grep -R "GET_V_IFACE_.*g_gameEvents" src/plugin.cpp
           ! grep -R "GET_V_IFACE_.*g_gameEventSystem" src/plugin.cpp
           ! grep -R "GET_V_IFACE_.*g_networkMessages" src/plugin.cpp
+          ! grep -R "GAMEEVENTSMANAGER002\|server-vfunc" src/plugin.cpp
