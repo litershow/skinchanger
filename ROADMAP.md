@@ -1,6 +1,8 @@
 # Roadmap
 
-## 0.2 — current test build
+## 0.2.2 — current test build
+
+- Metamod 1467 Linux entity resolver fix: direct `CConcreteEntityList` lookup, no unresolved `CEntitySystem::GetEntityIdentity`.
 - KHook lifecycle and GameFrame loop
 - runtime SchemaSystem field resolution
 - paint kit / seed / wear / StatTrak for existing weapons

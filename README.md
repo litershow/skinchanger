@@ -1,10 +1,10 @@
-# CS2 KHook SkinChanger 0.2
+# CS2 KHook SkinChanger 0.2.2
 
 Native C++ skin changer for **Counter-Strike 2 + Metamod:Source 2.x + KHook**.
 It does not depend on CounterStrikeSharp. The weapon/econ logic runs directly as a
 Metamod plugin; the interactive CenterHTML UI uses the native **CS2Menus** Metamod API.
 
-> Status: **0.2 test build**. Weapon paint/seed/wear/StatTrak plus the `!skin`
+> Status: **0.2.2 test build**. Weapon paint/seed/wear/StatTrak plus the `!skin`
 > CenterHTML menu are implemented. Knife model/definition changing, gloves, agents and
 > persistent SteamID profiles are not part of this build yet.
 
@@ -90,6 +90,16 @@ kh_skin 282 0 0.0001 -1
 One platform-specific bridge remains in `src/platform_offsets.h` for locating
 `CGameEntitySystem` through the game resource service. This should be the first value
 checked after a major CS2 binary-layout update if entity access breaks.
+
+
+### Metamod 1467 / Linux entity lookup fix
+
+`0.2.2` no longer calls `CEntitySystem::GetEntityIdentity()` / `GetEntityInstance()` from
+the plugin binary. Current hl2sdk declares `GetEntityInstance()` inline, but that wrapper
+calls the non-inline `GetEntityIdentity()` symbol; on current Linux CS2 that symbol is not
+exported for third-party plugins and caused Metamod to fail loading with `undefined symbol`
+before `Load()` ran. Entity lookup now reads the public `CConcreteEntityList` layout from
+hl2sdk directly and validates entity-handle serials locally.
 
 ## Build entirely on GitHub (no WSL)
 

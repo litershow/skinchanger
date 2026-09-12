@@ -1,4 +1,4 @@
-KHook SkinChanger 0.2
+KHook SkinChanger 0.2.2
 
 Built-in weapon/paint catalog: src/skin_catalog.cpp (source tree).
 No runtime skin config/database is required in this test build.

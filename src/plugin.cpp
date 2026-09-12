@@ -485,12 +485,55 @@ void KHookSkinChanger::RefreshEntitySystem()
     m_entitySystem = location ? *location : nullptr;
 }
 
+CEntityIdentity* KHookSkinChanger::ResolveIdentity(CEntityIndex index) const
+{
+    if (!m_entitySystem)
+        return nullptr;
+
+    const int rawIndex = index.Get();
+    if (rawIndex < 0 || rawIndex >= MAX_TOTAL_ENTITIES)
+        return nullptr;
+
+    const int listIndex = rawIndex / MAX_ENTITIES_IN_LIST;
+    const int entryIndex = rawIndex % MAX_ENTITIES_IN_LIST;
+    CEntityIdentity* chunk = m_entitySystem->m_EntityList.m_pIdentityChunks[listIndex];
+    if (!chunk)
+        return nullptr;
+
+    CEntityIdentity* identity = &chunk[entryIndex];
+    if (!identity->m_pInstance || identity->GetEntityIndex() != index)
+        return nullptr;
+
+    return identity;
+}
+
+CEntityInstance* KHookSkinChanger::ResolveEntity(CEntityIndex index) const
+{
+    CEntityIdentity* identity = ResolveIdentity(index);
+    return identity ? identity->m_pInstance : nullptr;
+}
+
+CEntityInstance* KHookSkinChanger::ResolveEntity(const CEntityHandle& handle) const
+{
+    CEntityIdentity* identity = ResolveIdentity(handle.GetEntryIndex());
+    if (!identity)
+        return nullptr;
+
+    // Validate the serial as well as the entry index. This avoids resolving a stale
+    // handle after an entity slot has been recycled. Both operations are inline in
+    // hl2sdk and do not create a runtime dependency on CEntitySystem symbols.
+    if (identity->GetRefEHandle() != handle)
+        return nullptr;
+
+    return identity->m_pInstance;
+}
+
 CEntityInstance* KHookSkinChanger::GetController(CPlayerSlot slot) const
 {
     if (!m_entitySystem || !slot.IsValid() || slot.Get() < 0 || slot.Get() >= kMaxPlayers)
         return nullptr;
 
-    return m_entitySystem->GetEntityInstance(CEntityIndex(slot.Get() + 1));
+    return ResolveEntity(CEntityIndex(slot.Get() + 1));
 }
 
 CEntityInstance* KHookSkinChanger::GetPawn(CPlayerSlot slot)
@@ -505,7 +548,7 @@ CEntityInstance* KHookSkinChanger::GetPawn(CPlayerSlot slot)
     if (!pawnHandle)
         return nullptr;
 
-    return m_entitySystem->GetEntityInstance(*pawnHandle);
+    return ResolveEntity(*pawnHandle);
 }
 
 CEntityInstance* KHookSkinChanger::GetActiveWeapon(CPlayerSlot slot, uint16_t* itemDefinition)
@@ -526,7 +569,7 @@ CEntityInstance* KHookSkinChanger::GetActiveWeapon(CPlayerSlot slot, uint16_t* i
     if (!activeWeaponHandle)
         return nullptr;
 
-    CEntityInstance* weapon = m_entitySystem->GetEntityInstance(*activeWeaponHandle);
+    CEntityInstance* weapon = ResolveEntity(*activeWeaponHandle);
     if (!weapon)
         return nullptr;
 

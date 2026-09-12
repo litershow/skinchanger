@@ -74,6 +74,9 @@ private:
 
     void RefreshEntitySystem();
     void TickPlayers();
+    CEntityIdentity* ResolveIdentity(CEntityIndex index) const;
+    CEntityInstance* ResolveEntity(CEntityIndex index) const;
+    CEntityInstance* ResolveEntity(const CEntityHandle& handle) const;
     CEntityInstance* GetController(CPlayerSlot slot) const;
     CEntityInstance* GetPawn(CPlayerSlot slot);
     CEntityInstance* GetActiveWeapon(CPlayerSlot slot, uint16_t* itemDefinition = nullptr);

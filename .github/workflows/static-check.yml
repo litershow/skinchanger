@@ -19,6 +19,8 @@ jobs:
           grep -R "AddSubMenu" src/plugin.cpp
           ! grep -R -E "SH_ADD_HOOK|SH_REMOVE_HOOK|SH_MEMBER" src
           grep -R "Schema_DynamicBinding" src/plugin.cpp
+          ! grep -R "GetEntityInstance(" src/plugin.cpp
+          grep -R "m_EntityList.m_pIdentityChunks" src/plugin.cpp
           grep -R "FindRawClassBinding" src/schema_resolver.cpp
       - name: Validate metadata JSON
         run: python3 -m json.tool plugin-metadata.json >/dev/null
