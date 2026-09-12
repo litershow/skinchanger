@@ -20,12 +20,34 @@ jobs:
 
       - name: Install build packages
         shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           set -euxo pipefail
 
-          apt-get update
+          # Separate APT sources and indexes for this build step.
+          apt_work="$(mktemp -d)"
+          chmod 0755 "$apt_work"
 
-          apt-get install -y --no-install-recommends \
+          mkdir -p \
+            "$apt_work/sources.list.d" \
+            "$apt_work/lists/partial"
+
+          printf '%s\n' \
+            'deb [arch=amd64 check-valid-until=no] http://archive.debian.org/debian bullseye main' \
+            > "$apt_work/sources.list"
+
+          apt_options=(
+            -o "Dir::Etc::sourcelist=$apt_work/sources.list"
+            -o "Dir::Etc::sourceparts=$apt_work/sources.list.d"
+            -o "Dir::State::lists=$apt_work/lists"
+            -o "APT::Default-Release=bullseye"
+          )
+
+          apt-get "${apt_options[@]}" update
+
+          apt-get "${apt_options[@]}" install \
+            -y --no-install-recommends \
             ca-certificates \
             git \
             zip \
