@@ -1,0 +1,91 @@
+name: Build CS2 KHook SkinChanger
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Install build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang lld protobuf-compiler python3-venv git zip
+
+      - name: Checkout Metamod and AMBuild
+        run: |
+          mkdir -p deps
+          git clone --depth=1 --recurse-submodules https://github.com/alliedmodders/metamod-source.git deps/metamod-source
+          git clone --depth=1 https://github.com/alliedmodders/ambuild.git deps/ambuild
+          git clone --depth=1 --branch 1.5.8 https://github.com/FemboyKZ/mm-cs2menus.git deps/mm-cs2menus
+
+      - name: Install AMBuild
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install ./deps/ambuild
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Checkout matching CS2 HL2SDK via Metamod helper
+        run: |
+          (cd deps && ./metamod-source/support/checkout-deps.sh -s cs2)
+          test -d deps/hl2sdk-cs2
+
+      - name: Import current CS2Menus native API header
+        run: |
+          HEADER="$(find deps/mm-cs2menus -type f -name ics2menus.h -print -quit)"
+          test -n "$HEADER"
+          cp "$HEADER" src/ics2menus.h
+          grep -q "ICS2Menus003" src/ics2menus.h
+
+      - name: Sync current Source2/KHook build scripts from Metamod
+        run: |
+          bash tools/sync-buildscripts.sh "$GITHUB_WORKSPACE/deps/metamod-source"
+          test -f deps/metamod-source/third_party/khook/include/khook.hpp
+          grep -q "third_party.*khook" AMBuildScript
+
+      - name: Configure
+        run: |
+          mkdir -p build
+          cd build
+          python3 ../configure.py \
+            --enable-optimize \
+            -s cs2 \
+            --targets=x86_64 \
+            --mms_path="$GITHUB_WORKSPACE/deps/metamod-source" \
+            --hl2sdk-root="$GITHUB_WORKSPACE/deps" \
+            --hl2sdk-manifests="$GITHUB_WORKSPACE/deps/metamod-source/hl2sdk-manifests"
+
+      - name: Build
+        run: |
+          cd build
+          ambuild
+
+      - name: Verify package
+        run: |
+          test -f build/package/cs2/addons/metamod/khook_skinchanger.vdf
+          test -f build/package/cs2/addons/khook_skinchanger/bin/linuxsteamrt64/khook_skinchanger.so
+          mkdir -p build/package/cs2/addons/khook_skinchanger/configs
+          cp configs/README.txt build/package/cs2/addons/khook_skinchanger/configs/README.txt
+          cp README.md build/package/cs2/addons/khook_skinchanger/README.md
+          cp LICENSE build/package/cs2/addons/khook_skinchanger/LICENSE
+          (cd build/package && zip -r "$GITHUB_WORKSPACE/khook_skinchanger-linux.zip" cs2)
+          sha256sum khook_skinchanger-linux.zip | tee khook_skinchanger-linux.zip.sha256
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: khook-skinchanger-linux
+          path: |
+            khook_skinchanger-linux.zip
+            khook_skinchanger-linux.zip.sha256
+          if-no-files-found: error
+          retention-days: 30

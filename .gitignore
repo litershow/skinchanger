@@ -1,0 +1,9 @@
+build/
+deps/
+.venv/
+AMBuildScript
+configure.py
+PackageScript
+*.so
+*.dll
+*.zip
