@@ -16,6 +16,8 @@ jobs:
           grep -R "DispatchConCommand" src/plugin.*
           grep -R "!skin" src/plugin.cpp
           grep -R "show_survival_respawn_status" src/plugin.cpp
+          grep -R "kh_skin_diag" src/plugin.cpp
+          grep -R "kSource2ServerGameEventManagerVtableIndex = 91" src/plugin.cpp
           grep -R "Source1LegacyGameEvent" src/plugin.cpp
           grep -R "m_pButtonStates" src/plugin.cpp
           grep -R "IN_FORWARD" src/plugin.cpp
@@ -27,3 +29,9 @@ jobs:
           grep -R "FindRawClassBinding" src/schema_resolver.cpp
       - name: Validate metadata JSON
         run: python3 -m json.tool plugin-metadata.json >/dev/null
+
+      - name: Ensure menu-only interfaces are not fatal GET_V_IFACE calls
+        run: |
+          ! grep -R "GET_V_IFACE_.*g_gameEvents" src/plugin.cpp
+          ! grep -R "GET_V_IFACE_.*g_gameEventSystem" src/plugin.cpp
+          ! grep -R "GET_V_IFACE_.*g_networkMessages" src/plugin.cpp

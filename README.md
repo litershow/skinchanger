@@ -1,10 +1,10 @@
-# CS2 KHook SkinChanger 0.3.0
+# CS2 KHook SkinChanger 0.3.1
 
 Native C++ skin changer for **Counter-Strike 2 + Metamod:Source 2.x + KHook**.
 This build contains its **own CenterHTML menu**. It does **not** require CounterStrikeSharp,
 CS2Menus, libcurl, or any second menu plugin.
 
-> Status: **0.3.0 test build**. Existing-weapon paint/seed/wear/StatTrak plus the built-in
+> Status: **0.3.1 test build**. Existing-weapon paint/seed/wear/StatTrak plus the built-in
 > `!skin` menu are implemented. Knife model/definition changing, gloves, agents and
 > persistent SteamID profiles are not part of this build yet.
 
@@ -46,7 +46,7 @@ The starter catalog is in `src/skin_catalog.cpp`.
 
 ## No CS2Menus dependency
 
-0.3.0 removes `ICS2Menus003` entirely. CenterHTML is sent directly through current CS2
+0.3.1 removes `ICS2Menus003` entirely. CenterHTML is sent directly through current CS2
 engine interfaces using `show_survival_respawn_status` serialized as the native
 `Source1LegacyGameEvent` network message and targeted to one player.
 
@@ -70,6 +70,7 @@ project is intended for the Metamod 2.0 dev line used by CS2, including build 14
 
 ```text
 kh_skin_menu
+kh_skin_diag
 kh_skin <paintkit> [seed] [wear] [stattrak]
 kh_skin_info
 kh_skin_clear
@@ -127,6 +128,8 @@ Selections are in memory and disappear on disconnect. `Default` writes fallback 
 kit `0`; it is not a perfect restoration of every inventory attribute. Knife model and
 item-definition replacement is intentionally left for a separate layer because it needs
 safe subclass/model refresh on the current game build.
+
+0.3.1 also makes the CenterHTML backend interfaces non-fatal during plugin startup and adds a fallback for `IGameEventManager2` through the Source2 server vtable when `GAMEEVENTSMANAGER002` is not exposed by EngineFactory. Run `kh_skin_diag` to see which backend interfaces were acquired.
 
 The built-in CenterHTML path is new and should be tested on a live server. If `!skin`
 displays but W/S/D/E/A do nothing, run `kh_skin_menu` while alive and send the server

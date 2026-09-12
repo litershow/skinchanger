@@ -1,3 +1,10 @@
+# v0.3.1 hotfix
+
+- Do not fail the whole plugin when CenterHTML-only engine interfaces are unavailable.
+- Try `GAMEEVENTSMANAGER002` through EngineFactory first, then Source2Server vfunc 91 fallback.
+- Add `kh_skin_diag` backend diagnostics.
+- Keep `INetworkMessages` and `IGameEventSystem` optional at startup and report them explicitly.
+
 # Roadmap
 
 ## 0.3.0 — current test build
